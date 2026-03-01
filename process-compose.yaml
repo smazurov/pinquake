@@ -1,0 +1,16 @@
+version: "0.5"
+
+processes:
+  backend:
+    command: "air"
+    availability:
+      restart: "on_failure"
+
+  frontend:
+    command: "pnpm dev"
+    working_dir: "./ui"
+    depends_on:
+      backend:
+        condition: process_started
+    availability:
+      restart: "on_failure"
