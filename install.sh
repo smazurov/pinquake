@@ -75,7 +75,7 @@ if command -v systemctl &> /dev/null && systemctl --user status 2>/dev/null; the
     cat > "$SYSTEMD_DIR/pinquake.service" << EOF
 [Unit]
 Description=Pinquake sensor server
-After=network-online.target
+After=network-online.target bluetooth.target
 Wants=network-online.target
 
 [Service]

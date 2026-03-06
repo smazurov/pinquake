@@ -34,9 +34,8 @@ func main() {
 	eventBus := events.New()
 
 	scanner := ble.NewScanner(eventBus, logger.With("module", "ble"))
-	if err := scanner.Init(); err != nil {
-		logger.Error("Failed to enable BLE adapter", "error", err)
-	}
+	bleStop := make(chan struct{})
+	go scanner.InitWithRetry(bleStop)
 
 	obsClient := obs.NewClient(eventBus, logger.With("module", "obs"))
 
@@ -55,6 +54,7 @@ func main() {
 	go func() {
 		<-sigCh
 		logger.Info("Shutting down")
+		close(bleStop)
 		if scanner.GetState() == ble.StateConnected {
 			scanner.Disconnect()
 		}
