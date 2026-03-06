@@ -8,6 +8,8 @@ export type SSEStatus =
 
 const INITIAL_RECONNECT_DELAY = 2000;
 const MAX_RECONNECT_DELAY = 30000;
+const STALENESS_CHECK_INTERVAL = 5000;
+const STALENESS_THRESHOLD = 20000;
 
 export interface SSEClientConfig {
   endpoint: string;
@@ -21,6 +23,8 @@ type TypedEventHandler<T> = (data: T) => void;
 export class SSEClient {
   private eventSource: EventSource | null = null;
   private reconnectTimeout: number | null = null;
+  private stalenessInterval: number | null = null;
+  private lastEventTime = 0;
   private reconnectDelay = INITIAL_RECONNECT_DELAY;
   private readonly typedHandlers: Map<string, TypedEventHandler<unknown>> =
     new Map();
@@ -37,25 +41,42 @@ export class SSEClient {
     this.eventSource = new EventSource(sseUrl);
 
     this.eventSource.onopen = () => {
+      const wasReconnecting = this.status === "reconnecting";
       this.reconnectDelay = INITIAL_RECONNECT_DELAY;
+      this.lastEventTime = Date.now();
       this.setStatus("connected");
       this.config.onConnect?.();
+      this.startStalenessWatchdog();
+      if (wasReconnecting) {
+        console.log(`SSE reconnected to ${this.config.endpoint}`);
+      } else {
+        console.log(`SSE connected to ${this.config.endpoint}`);
+      }
     };
+
+    this.eventSource.addEventListener("heartbeat", () => {
+      this.lastEventTime = Date.now();
+    });
 
     for (const [eventType, handler] of this.typedHandlers) {
       this.attachTypedHandler(eventType, handler);
     }
 
     this.eventSource.onerror = () => {
+      this.stopStalenessWatchdog();
       this.setStatus("reconnecting");
       this.eventSource?.close();
       this.eventSource = null;
       this.config.onError?.(true);
+      console.warn(
+        `SSE disconnected from ${this.config.endpoint}, reconnecting in ${this.reconnectDelay}ms`,
+      );
       this.scheduleReconnect();
     };
   }
 
   disconnect(): void {
+    this.stopStalenessWatchdog();
     if (this.reconnectTimeout) {
       window.clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -93,6 +114,7 @@ export class SSEClient {
     handler: TypedEventHandler<unknown>,
   ): void {
     this.eventSource?.addEventListener(eventType, (event: MessageEvent) => {
+      this.lastEventTime = Date.now();
       try {
         const data: unknown = JSON.parse(String(event.data));
         handler(data);
@@ -100,6 +122,33 @@ export class SSEClient {
         console.error(`Error parsing ${eventType} event:`, error);
       }
     });
+  }
+
+  private startStalenessWatchdog(): void {
+    this.stopStalenessWatchdog();
+    this.stalenessInterval = window.setInterval(() => {
+      if (
+        this.status === "connected" &&
+        Date.now() - this.lastEventTime > STALENESS_THRESHOLD
+      ) {
+        console.warn(
+          `SSE stale (no events for ${STALENESS_THRESHOLD / 1000}s), reconnecting`,
+        );
+        this.stopStalenessWatchdog();
+        this.eventSource?.close();
+        this.eventSource = null;
+        this.setStatus("reconnecting");
+        this.config.onError?.(true);
+        this.scheduleReconnect();
+      }
+    }, STALENESS_CHECK_INTERVAL);
+  }
+
+  private stopStalenessWatchdog(): void {
+    if (this.stalenessInterval) {
+      window.clearInterval(this.stalenessInterval);
+      this.stalenessInterval = null;
+    }
   }
 
   private setStatus(status: SSEStatus): void {

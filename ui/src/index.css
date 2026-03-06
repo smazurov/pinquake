@@ -11,6 +11,47 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Dark-mode range slider track */
+.dark input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: #334155; /* slate-700 */
+}
+
+.dark input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #93c5fd; /* blue-300 */
+  cursor: pointer;
+  border: 2px solid #1e40af; /* blue-800 */
+}
+
+.dark input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #334155;
+}
+
+.dark input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #93c5fd;
+  cursor: pointer;
+  border: 2px solid #1e40af;
+}
+
+.dark input[type="range"]::-moz-range-progress {
+  background: #2563eb; /* blue-600 */
+  height: 6px;
+  border-radius: 3px;
+}
+
 html,
 body {
   height: 100%;

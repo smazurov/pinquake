@@ -5,6 +5,10 @@ const (
 	TypeBLEStatus
 	TypeBLEScanResult
 	TypeConfigChanged
+	TypeBattery
+	TypeHeartbeat
+	TypeLogEntry
+	TypeOBSStatus
 )
 
 type Event interface {
@@ -23,19 +27,22 @@ func (e OrientationEvent) Type() uint32 { return TypeOrientation }
 
 // BLEStatusEvent reports BLE connection state changes.
 type BLEStatusEvent struct {
-	Status    string `json:"status"`
-	Device    string `json:"device,omitempty"`
-	Timestamp string `json:"timestamp"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	Device     string `json:"device,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	Timestamp  string `json:"timestamp"`
 }
 
 func (e BLEStatusEvent) Type() uint32 { return TypeBLEStatus }
 
 // BLEScanResultEvent carries a single BLE scan advertisement.
 type BLEScanResultEvent struct {
-	Address   string `json:"address"`
-	Name      string `json:"name"`
-	RSSI      int    `json:"rssi"`
-	Timestamp string `json:"timestamp"`
+	Address    string `json:"address"`
+	Name       string `json:"name"`
+	RSSI       int    `json:"rssi"`
+	SensorName string `json:"sensor_name,omitempty"`
+	Timestamp  string `json:"timestamp"`
 }
 
 func (e BLEScanResultEvent) Type() uint32 { return TypeBLEScanResult }
@@ -46,3 +53,37 @@ type ConfigChangedEvent struct {
 }
 
 func (e ConfigChangedEvent) Type() uint32 { return TypeConfigChanged }
+
+// BatteryEvent carries periodic battery level and charging state.
+type BatteryEvent struct {
+	BatteryPercent uint8   `json:"battery_percent"`
+	BatteryVolts   float32 `json:"battery_volts"`
+	Charging       bool    `json:"charging"`
+	Timestamp      string  `json:"timestamp"`
+}
+
+func (e BatteryEvent) Type() uint32 { return TypeBattery }
+
+// HeartbeatEvent is a server-sent keepalive for staleness detection.
+type HeartbeatEvent struct {
+	Timestamp string `json:"timestamp"`
+}
+
+func (e HeartbeatEvent) Type() uint32 { return TypeHeartbeat }
+
+// LogEntry is a generic log event for the persistent event log.
+type LogEntry struct {
+	Message   string `json:"message"`
+	Level     string `json:"level"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (e LogEntry) Type() uint32 { return TypeLogEntry }
+
+type OBSStatusEvent struct {
+	Status    string `json:"status"`
+	Reason    string `json:"reason,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (e OBSStatusEvent) Type() uint32 { return TypeOBSStatus }

@@ -1,0 +1,143 @@
+import { describe, it, expect } from "vitest";
+import { extractFieldMeta, extractAllFieldMeta, extractSectionSchema } from "./schema";
+
+describe("extractFieldMeta", () => {
+  const schema = {
+    properties: {
+      smoothing: {
+        type: "number",
+        description: "Exponential smoothing factor",
+        minimum: 0,
+        maximum: 1,
+        multipleOf: 0.05,
+        default: 0.7,
+      },
+      buffer_size: {
+        type: "integer",
+        description: "Ring buffer sample count",
+        minimum: 32,
+        maximum: 512,
+        default: 256,
+      },
+      swap_xy: {
+        type: "boolean",
+        description: "Swap X and Y axes",
+        default: false,
+      },
+      raw_value: {
+        type: "number",
+        description: "A plain number field",
+        default: 42,
+      },
+    },
+  };
+
+  it("extracts slider field when min+max+step present", () => {
+    const meta = extractFieldMeta(schema, "smoothing");
+    expect(meta).toEqual({
+      key: "smoothing",
+      type: "slider",
+      description: "Exponential smoothing factor",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      default: 0.7,
+    });
+  });
+
+  it("extracts slider field when min+max present (no step)", () => {
+    const meta = extractFieldMeta(schema, "buffer_size");
+    expect(meta).toEqual({
+      key: "buffer_size",
+      type: "slider",
+      description: "Ring buffer sample count",
+      min: 32,
+      max: 512,
+      step: undefined,
+      default: 256,
+    });
+  });
+
+  it("extracts checkbox for boolean", () => {
+    const meta = extractFieldMeta(schema, "swap_xy");
+    expect(meta).toEqual({
+      key: "swap_xy",
+      type: "checkbox",
+      description: "Swap X and Y axes",
+      default: false,
+    });
+  });
+
+  it("extracts number field when no min/max", () => {
+    const meta = extractFieldMeta(schema, "raw_value");
+    expect(meta).toEqual({
+      key: "raw_value",
+      type: "number",
+      description: "A plain number field",
+      min: undefined,
+      max: undefined,
+      step: undefined,
+      default: 42,
+    });
+  });
+
+  it("returns null for unknown key", () => {
+    expect(extractFieldMeta(schema, "nope")).toBeNull();
+  });
+});
+
+describe("extractAllFieldMeta", () => {
+  it("returns all fields in order", () => {
+    const schema = {
+      properties: {
+        a: { type: "number", description: "A", minimum: 0, maximum: 1, multipleOf: 0.1 },
+        b: { type: "boolean", description: "B" },
+      },
+    };
+    const metas = extractAllFieldMeta(schema);
+    expect(metas).toHaveLength(2);
+    expect(metas[0]!.key).toBe("a");
+    expect(metas[1]!.key).toBe("b");
+  });
+
+  it("returns empty array for missing properties", () => {
+    expect(extractAllFieldMeta({})).toEqual([]);
+  });
+});
+
+describe("extractSectionSchema", () => {
+  const openAPI = {
+    components: {
+      schemas: {
+        PinQuakeConfig: {
+          properties: {
+            waveform: {
+              properties: {
+                buffer_size: { type: "integer", minimum: 32, maximum: 512 },
+              },
+            },
+          },
+        },
+        CrosshairConfig: {
+          properties: {
+            smoothing: { type: "number", minimum: 0, maximum: 1, multipleOf: 0.05 },
+          },
+        },
+      },
+    },
+  };
+
+  it("extracts inline section schema", () => {
+    const section = extractSectionSchema(openAPI, "waveform");
+    expect(section?.properties).toHaveProperty("buffer_size");
+  });
+
+  it("falls back to type name lookup", () => {
+    const section = extractSectionSchema(openAPI, "crosshair");
+    expect(section?.properties).toHaveProperty("smoothing");
+  });
+
+  it("returns null for unknown section", () => {
+    expect(extractSectionSchema(openAPI, "unknown")).toBeNull();
+  });
+});

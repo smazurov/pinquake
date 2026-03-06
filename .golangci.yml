@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - (tinygo.org/x/bluetooth.Device).Disconnect
+        - (*github.com/godbus/dbus/v5.Conn).RemoveMatchSignal
+        - (github.com/danielgtaylor/huma/v2/sse.Sender).Data
+        - (*github.com/smazurov/pinquake/internal/ble.Scanner).Disconnect

@@ -46,7 +46,7 @@ const Waveform = forwardRef<WaveformHandle, WaveformProps>(function Waveform(
   const rafRef = useRef<number>(0);
 
   const configRef = useRef<WaveformConfig>(DEFAULT_CONFIG);
-  configRef.current = { ...DEFAULT_CONFIG, ...configOverride };
+  useEffect(() => { configRef.current = { ...DEFAULT_CONFIG, ...configOverride }; }, [configOverride]);
 
   const pushSample = useCallback((gx: number, gy: number) => {
     const head = headRef.current;

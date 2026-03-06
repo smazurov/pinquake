@@ -13,6 +13,7 @@ import (
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/config"
 	"github.com/smazurov/pinquake/internal/events"
+	"github.com/smazurov/pinquake/internal/obs"
 )
 
 type Options struct {
@@ -37,11 +38,16 @@ func main() {
 		logger.Error("Failed to enable BLE adapter", "error", err)
 	}
 
+	obsClient := obs.NewClient(eventBus, logger.With("module", "obs"))
+
 	server := api.NewServer(&api.Options{
 		EventBus:   eventBus,
 		Scanner:    scanner,
+		OBS:        obsClient,
 		ConfigPath: opts.Config,
 	})
+
+	go server.AutoConnect()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -54,6 +60,7 @@ func main() {
 		}
 		eventBus.Publish(events.BLEStatusEvent{
 			Status:    "disconnected",
+			Reason:    "shutdown",
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
 		if err := server.Stop(); err != nil {

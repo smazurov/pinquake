@@ -1,63 +1,55 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { LinkIcon, LinkSlashIcon, NoSymbolIcon, BoltIcon, Battery0Icon, Battery50Icon, Battery100Icon, LockClosedIcon, LockOpenIcon, ArrowPathIcon } from "@heroicons/react/20/solid";
 import { SSEClient } from "../lib/api_sse";
-import { connectDevice, disconnectDevice, getConfig, lockFrame, unlockFrame, getFrameState } from "../lib/api";
-import type { BLEScanResult } from "../lib/api";
-import { Card, CardHeader, CardContent } from "./Card";
+import type { SSEStatus } from "../lib/api_sse";
+import { connectDevice, disconnectDevice, lockFrame, unlockFrame, forceLockFrame, getFrameState } from "../lib/api";
+import type { BLEScanResult, LogEntry } from "../lib/api";
+import Collapsible from "./Collapsible";
 
 type BLEState = "idle" | "scanning" | "connecting" | "connected" | "disconnected";
 
-function StatusDot({ state, scanning }: { state: BLEState; scanning: boolean }) {
-  const color =
-    state === "connected"
-      ? "bg-green-400"
-      : state === "connecting" || scanning
-        ? "bg-yellow-400"
-        : "bg-red-400";
+function statusColor(state: BLEState, scanning: boolean, reason: string | null): string {
+  if (state === "connected") return "bg-green-400";
+  if (state === "connecting" || scanning) return "bg-yellow-400";
+  if (state === "disconnected" && reason === "lost") return "bg-orange-400";
+  return "bg-red-400";
+}
+
+function StatusDot({ state, scanning, reason }: Readonly<{ state: BLEState; scanning: boolean; reason: string | null }>) {
+  const color = statusColor(state, scanning, reason);
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }
 
-function ScanIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-      <path
-        fillRule="evenodd"
-        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+function formatStateLabel(state: BLEState, scanning: boolean, disconnecting: boolean, reason: string | null): string {
+  if (disconnecting) return "Disconnecting";
+  if (scanning) return "Scanning";
+  if (state === "disconnected" && reason === "lost") return "Connection lost";
+  return state.charAt(0).toUpperCase() + state.slice(1);
 }
 
-function StopIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-      <rect x="4" y="4" width="12" height="12" rx="2" />
-    </svg>
-  );
+function batteryProps(percent: number) {
+  if (percent <= 25) return { Icon: Battery0Icon, color: "text-red-500" };
+  if (percent <= 75) return { Icon: Battery50Icon, color: "text-yellow-500" };
+  return { Icon: Battery100Icon, color: "text-green-500" };
 }
 
-function DisconnectIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-      <path
-        fillRule="evenodd"
-        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+function BatteryIndicator({ percent }: Readonly<{ percent: number }>) {
+  const { Icon, color } = batteryProps(percent);
+  return <Icon className={`h-[18px] w-[18px] ${color}`} />;
 }
 
-function Spinner({ className }: { className?: string }) {
-  return (
-    <svg className={`animate-spin ${className ?? ""}`} viewBox="0 0 20 20" fill="none" width="18" height="18">
-      <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-      <path d="M10 3a7 7 0 017 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
+const levelColor: Record<string, string> = {
+  info: "text-slate-400",
+  warn: "text-amber-400",
+  error: "text-red-400",
+};
+
+function formatTime(timestamp: string): string {
+  const d = new Date(timestamp);
+  return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
-export default function BLEControl() {
+export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void; onOBSStatus?: (status: string) => void }>) {
   const [bleState, setBleState] = useState<BLEState>("idle");
   const [scanResults, setScanResults] = useState<Map<string, BLEScanResult>>(
     new Map(),
@@ -67,32 +59,56 @@ export default function BLEControl() {
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [frameLocked, setFrameLocked] = useState(false);
+  const [battery, setBattery] = useState<{ percent: number; volts: number; charging: boolean } | null>(null);
+  const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
   const mainSSE = useRef<SSEClient | null>(null);
   const scanSSE = useRef<SSEClient | null>(null);
-
-  useEffect(() => {
-    void getConfig().then((cfg) => setDeviceName(cfg.ble.device_name));
-  }, []);
+  const onSSEStatusRef = useRef(onSSEStatus);
+  useEffect(() => { onSSEStatusRef.current = onSSEStatus; }, [onSSEStatus]);
+  const onOBSStatusRef = useRef(onOBSStatus);
+  useEffect(() => { onOBSStatusRef.current = onOBSStatus; }, [onOBSStatus]);
 
   useEffect(() => {
     const client = new SSEClient({
       endpoint: "/api/events",
       onStatusChange: (status) => {
+        onSSEStatusRef.current?.(status);
         if (status === "reconnecting" || status === "disconnected") {
           setBleState("disconnected");
         }
       },
     });
-    client.on<{ status: string }>("ble-status", (data) => {
+    client.on<{ status: string; reason?: string; device_name?: string }>("ble-status", (data) => {
       setBleState(data.status as BLEState);
+      if (data.status === "disconnected") {
+        setDisconnectReason(data.reason ?? null);
+      } else {
+        setDisconnectReason(null);
+      }
       if (data.status === "idle" || data.status === "disconnected") {
         setDisconnecting(false);
         setFrameLocked(false);
+        setDeviceName(null);
+        setBattery(null);
+      }
+      if (data.status === "connected" || data.status === "connecting") {
+        setDeviceName(data.device_name ?? null);
+        setScanResults(new Map());
       }
       if (data.status === "connected") {
         void getFrameState().then((s) => setFrameLocked(s.locked));
       }
+    });
+    client.on<{ battery_percent: number; battery_volts: number; charging: boolean }>("battery", (data) => {
+      setBattery({ percent: data.battery_percent, volts: data.battery_volts, charging: data.charging });
+    });
+    client.on<LogEntry>("log", (data) => {
+      setLogEntries((prev) => [...prev, data]);
+    });
+    client.on<{ status: string }>("obs-status", (data) => {
+      onOBSStatusRef.current?.(data.status);
     });
     client.connect();
     mainSSE.current = client;
@@ -111,8 +127,10 @@ export default function BLEControl() {
     const client = new SSEClient({
       endpoint: "/api/ble/scan",
       onError: () => {
-        setScanning(false);
+        client.disconnect();
         scanSSE.current = null;
+        setScanning(false);
+        setError("BLE scan failed — check adapter");
       },
     });
     client.on<BLEScanResult>("device", (data) => {
@@ -132,16 +150,17 @@ export default function BLEControl() {
       scanSSE.current = null;
     }
     setScanning(false);
+    setScanResults(new Map());
   }, []);
 
   const handleConnect = useCallback(
-    async (address: string) => {
+    async (device: { address: string; name: string }) => {
       stopScan();
       setError(null);
       try {
-        await connectDevice(address);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err));
+        await connectDevice(device.address, device.name);
+      } catch (error_: unknown) {
+        setError(error_ instanceof Error ? error_.message : String(error_));
       }
     },
     [stopScan],
@@ -156,8 +175,8 @@ export default function BLEControl() {
         await lockFrame();
         setFrameLocked(true);
       }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (error_: unknown) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     }
   }, [frameLocked]);
 
@@ -166,117 +185,151 @@ export default function BLEControl() {
     setDisconnecting(true);
     try {
       await disconnectDevice();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (error_: unknown) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
       setDisconnecting(false);
     }
   }, []);
 
-  const sortedResults = [...scanResults.values()].sort(
-    (a, b) => b.rssi - a.rssi,
-  );
+  const sortedResults = [...scanResults.values()].sort((a, b) => {
+    const aKnown = a.sensor_name ? 1 : 0;
+    const bKnown = b.sensor_name ? 1 : 0;
+    if (aKnown !== bKnown) return bKnown - aKnown;
+    return b.rssi - a.rssi;
+  });
 
   const isIdle = (bleState === "idle" || bleState === "disconnected") && !scanning;
   const isConnecting = bleState === "connecting";
   const isConnected = bleState === "connected";
 
-  const stateLabel = scanning ? "scanning" : bleState;
+  const stateLabel = formatStateLabel(bleState, scanning, disconnecting, disconnectReason);
+
+  const headerContent = (
+    <div className="flex items-center justify-between w-full">
+      <div className="flex items-center gap-2">
+        <StatusDot state={bleState} scanning={scanning} reason={disconnectReason} />
+        {isConnected && deviceName ? (
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-slate-300 truncate max-w-[140px]">
+              {deviceName}
+            </span>
+            {battery && (
+              <span className="flex items-center gap-1 text-slate-400 shrink-0" title={`${battery.percent}%${battery.charging ? " (charging)" : ""}`}>
+                <BatteryIndicator percent={battery.percent} />
+                {battery.charging && <BoltIcon className="h-3.5 w-3.5" />}
+              </span>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); void handleToggleFrameLock(); }}
+              className={`transition-colors ${
+                frameLocked
+                  ? "text-green-400 hover:text-green-300"
+                  : "text-slate-400 hover:text-slate-300"
+              }`}
+              title={frameLocked ? "Disable auto-lock" : "Enable auto-lock"}
+            >
+              {frameLocked ? <LockClosedIcon className="h-[18px] w-[18px]" /> : <LockOpenIcon className="h-[18px] w-[18px]" />}
+            </button>
+            {frameLocked && (
+              <button
+                onClick={(e) => { e.stopPropagation(); void forceLockFrame(); }}
+                className="text-slate-400 hover:text-slate-300 transition-colors"
+                title="Force lock now"
+              >
+                <ArrowPathIcon className="h-[18px] w-[18px]" />
+              </button>
+            )}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-400">{stateLabel}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-3">
+        {isIdle && (
+          <button
+            onClick={(e) => { e.stopPropagation(); startScan(); }}
+            className="text-blue-400 hover:text-blue-300 transition-colors"
+            title="Scan for devices"
+          >
+            <LinkIcon className="h-[18px] w-[18px]" />
+          </button>
+        )}
+        {scanning && (
+          <button
+            onClick={(e) => { e.stopPropagation(); stopScan(); }}
+            className="text-yellow-400 hover:text-yellow-300 transition-colors"
+            title="Stop scan"
+          >
+            <NoSymbolIcon className="h-[18px] w-[18px]" />
+          </button>
+        )}
+        {isConnecting && (
+          <span className="text-slate-400" title="Connecting...">
+            <LinkIcon className="h-[18px] w-[18px] animate-pulse" />
+          </span>
+        )}
+        {isConnected && (
+          <button
+            onClick={(e) => { e.stopPropagation(); void handleDisconnect(); }}
+            className={`text-red-400 hover:text-red-300 transition-colors ${disconnecting ? "opacity-50 pointer-events-none" : ""}`}
+            title="Disconnect"
+            disabled={disconnecting}
+          >
+            <LinkSlashIcon className="h-[18px] w-[18px]" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <Card padding="lg">
-      <CardHeader className={isConnected ? "border-b-0 pb-0 mb-0" : ""}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <StatusDot state={bleState} scanning={scanning} />
-            <span className="text-xs text-slate-400">{stateLabel}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {isConnected && deviceName && (
-              <span className="text-xs text-slate-300 truncate max-w-[140px]">
-                {deviceName}
-              </span>
-            )}
-            {isIdle && (
-              <button
-                onClick={startScan}
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-                title="Scan for devices"
-              >
-                <ScanIcon />
-              </button>
-            )}
-            {scanning && (
-              <button
-                onClick={stopScan}
-                className="text-yellow-400 hover:text-yellow-300 transition-colors"
-                title="Stop scan"
-              >
-                <StopIcon />
-              </button>
-            )}
-            {isConnecting && (
-              <span className="text-slate-400" title="Connecting...">
-                <Spinner />
-              </span>
-            )}
-            {isConnected && (
-              <button
-                onClick={() => void handleToggleFrameLock()}
-                className={`text-xs px-2 py-0.5 rounded transition-colors ${
-                  frameLocked
-                    ? "bg-green-700 text-green-200 hover:bg-green-600"
-                    : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                }`}
-                title={frameLocked ? "Unlock reference frame" : "Lock reference frame"}
-              >
-                {frameLocked ? "Locked" : "Lock"}
-              </button>
-            )}
-            {isConnected && (
-              <button
-                onClick={() => void handleDisconnect()}
-                className={`text-red-400 hover:text-red-300 transition-colors ${disconnecting ? "opacity-50 pointer-events-none" : ""}`}
-                title="Disconnect"
-                disabled={disconnecting}
-              >
-                <DisconnectIcon />
-              </button>
-            )}
-          </div>
+    <Collapsible id="ble" header={headerContent} defaultOpen={true}>
+      {error && (
+        <div className="rounded bg-red-900/50 px-3 py-2 text-xs text-red-300 mb-3">
+          {error}
         </div>
-      </CardHeader>
-      <CardContent>
-        {error && (
-          <div className="rounded bg-red-900/50 px-3 py-2 text-xs text-red-300 mb-3">
-            {error}
-          </div>
-        )}
+      )}
 
-        {sortedResults.length > 0 && !isConnected && (
-          <div className="max-h-[280px] overflow-y-auto space-y-1">
-            {sortedResults.slice(0, 10).map((device) => (
-              <button
-                key={device.address}
-                className="w-full flex items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-700/50 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                disabled={isConnecting}
-                onClick={() => void handleConnect(device.address)}
-              >
-                <div className="min-w-0">
-                  <div className="text-slate-200 truncate">
-                    {device.name || "Unknown"}
-                  </div>
-                  <div className="text-xs text-slate-500 font-mono">
-                    {device.address}
-                  </div>
+      {sortedResults.length > 0 && !isConnected && (
+        <div className="max-h-[280px] overflow-y-auto space-y-1">
+          {sortedResults.slice(0, 10).map((device) => (
+            <button
+              key={device.address}
+              className="w-full flex items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-700/50 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+              disabled={isConnecting}
+              onClick={() => void handleConnect(device)}
+            >
+              <div className="min-w-0">
+                <div className="text-slate-200 truncate">
+                  {device.name || "Unknown"}
+                  {device.sensor_name && (
+                    <span className="ml-2 rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                      {device.sensor_name}
+                    </span>
+                  )}
                 </div>
-                <span className="text-xs text-slate-400 shrink-0 ml-3">
-                  {device.rssi} dBm
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+                <div className="text-xs text-slate-500 font-mono">
+                  {device.address}
+                </div>
+              </div>
+              <span className="text-xs text-slate-400 shrink-0 ml-3">
+                {device.rssi} dBm
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {logEntries.length > 0 && (
+        <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs border-t border-slate-700 pt-3">
+          {[...logEntries].reverse().map((entry, i) => (
+            <div key={i} className={levelColor[entry.level] ?? "text-slate-400"}>
+              <span className="text-slate-500 mr-2">{formatTime(entry.timestamp)}</span>
+              {entry.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </Collapsible>
   );
 }

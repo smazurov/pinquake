@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/events"
+	"github.com/smazurov/pinquake/internal/obs"
+	"github.com/smazurov/pinquake/internal/sensors"
 	"github.com/smazurov/pinquake/ui"
 )
 
@@ -18,12 +23,16 @@ type Server struct {
 	httpServer *http.Server
 	eventBus   *events.Bus
 	scanner    *ble.Scanner
+	obs        *obs.Client
 	configPath string
+	eventLogMu sync.Mutex
+	eventLog   []events.LogEntry
 }
 
 type Options struct {
 	EventBus   *events.Bus
 	Scanner    *ble.Scanner
+	OBS        *obs.Client
 	ConfigPath string
 }
 
@@ -45,11 +54,46 @@ func NewServer(opts *Options) *Server {
 		mux:        mux,
 		eventBus:   opts.EventBus,
 		scanner:    opts.Scanner,
+		obs:        opts.OBS,
 		configPath: opts.ConfigPath,
 	}
 
+	opts.Scanner.OnConnect(func(sensorName string) {
+		cfg, _ := server.loadAppConfig()
+		cfg.BLE.SensorName = sensorName
+		_ = server.saveAppConfig(cfg)
+	})
+
+	opts.EventBus.Subscribe(func(e events.BLEStatusEvent) {
+		switch e.Status {
+		case "connecting":
+			name := e.DeviceName
+			if name == "" {
+				name = e.Device
+			}
+			server.log("info", fmt.Sprintf("Connecting to %s", name))
+		case "connected":
+			name := e.DeviceName
+			if name == "" {
+				name = e.Device
+			}
+			server.log("info", fmt.Sprintf("Connected to %s", name))
+		case "idle":
+			if e.Device != "" {
+				server.log("error", fmt.Sprintf("Connection failed: %s", e.Device))
+			}
+		case "disconnected":
+			msg := "Disconnected"
+			if e.Reason != "" {
+				msg = fmt.Sprintf("Disconnected (%s)", e.Reason)
+			}
+			server.log("warn", msg)
+		}
+	})
+
 	server.registerRoutes()
 	server.syncSwapXY()
+	server.syncAutoLock()
 
 	if frontendHandler, err := ui.Handler(); err == nil {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +114,36 @@ func (s *Server) Start(addr string) error {
 		Handler: s.mux,
 	}
 	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) AutoConnect() {
+	cfg, err := s.loadAppConfig()
+	if err != nil {
+		return
+	}
+	if cfg.BLE.DeviceAddress != "" {
+		if cfg.BLE.SensorName != "" {
+			if factory := sensors.FactoryByName(cfg.BLE.SensorName); factory != nil {
+				s.scanner.SetSensorFactory(factory)
+			}
+		}
+		_ = s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName)
+	}
+	if cfg.OBS.Host != "" {
+		s.obs.AutoConnect(cfg.OBS.Host, cfg.OBS.Port, cfg.OBS.Password)
+	}
+}
+
+func (s *Server) log(level, message string) {
+	entry := events.LogEntry{
+		Message:   message,
+		Level:     level,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	}
+	s.eventLogMu.Lock()
+	s.eventLog = append(s.eventLog, entry)
+	s.eventLogMu.Unlock()
+	s.eventBus.Publish(entry)
 }
 
 func (s *Server) Stop() error {
@@ -98,6 +172,7 @@ func (s *Server) registerRoutes() {
 	s.registerConfigRoutes()
 	s.registerSSERoutes()
 	s.registerBLERoutes()
+	s.registerOBSRoutes()
 }
 
 type HealthData struct {

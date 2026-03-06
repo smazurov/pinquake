@@ -15,20 +15,47 @@ import (
 type PinQuakeConfig struct {
 	BLE       BLEConfig       `json:"ble" toml:"ble"`
 	Waveform  WaveformConfig  `json:"waveform" toml:"waveform"`
+	Crosshair CrosshairConfig `json:"crosshair" toml:"crosshair"`
 	Viz       VizConfig       `json:"viz" toml:"viz"`
+	AutoLock  AutoLockConfig  `json:"auto_lock" toml:"auto_lock"`
+	OBS       OBSConfig       `json:"obs" toml:"obs"`
+}
+
+type OBSConfig struct {
+	Host       string `json:"host" toml:"host" default:"localhost" doc:"OBS WebSocket host"`
+	Port       int    `json:"port" toml:"port" default:"4455" doc:"OBS WebSocket port"`
+	Password   string `json:"password" toml:"password" doc:"OBS WebSocket password"`
+	SceneName  string `json:"scene_name" toml:"scene_name" doc:"OBS scene containing the browser source"`
+	SourceName string `json:"source_name" toml:"source_name" doc:"OBS browser source name to toggle"`
 }
 
 type BLEConfig struct {
-	DeviceName string `json:"device_name" toml:"device_name" example:"PinLevel"`
+	DeviceAddress string `json:"device_address" toml:"device_address"`
+	DeviceName    string `json:"device_name" toml:"device_name"`
+	SensorName    string `json:"sensor_name" toml:"sensor_name"`
 }
 
 type WaveformConfig struct {
-	BufferSize   int     `json:"buffer_size" toml:"buffer_size" example:"256"`
-	LogKnee      float64 `json:"log_knee" toml:"log_knee" example:"0.02"`
-	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" example:"0.03"`
-	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" example:"0.10"`
-	AmpScale     float64 `json:"amp_scale" toml:"amp_scale" example:"1.0"`
-	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" example:"false"`
+	BufferSize   int     `json:"buffer_size" toml:"buffer_size" doc:"Ring buffer sample count" minimum:"32" maximum:"512" default:"256"`
+	LogKnee      float64 `json:"log_knee" toml:"log_knee" doc:"Log compression knee" minimum:"0.001" maximum:"0.1" default:"0.02"`
+	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" default:"0.03"`
+	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" default:"0.1"`
+	AmpScale     float64 `json:"amp_scale" toml:"amp_scale" doc:"Amplitude multiplier" minimum:"0.1" maximum:"5.0" default:"1.0"`
+	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
+}
+
+type CrosshairConfig struct {
+	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" default:"0.03"`
+	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" default:"0.1"`
+	Smoothing    float64 `json:"smoothing" toml:"smoothing" doc:"Exponential smoothing factor" minimum:"0" maximum:"1" default:"0.7"`
+	SegmentSize  int     `json:"segment_size" toml:"segment_size" doc:"Bar segment size (px)" minimum:"2" maximum:"30" default:"10"`
+	BarThickness int     `json:"bar_thickness" toml:"bar_thickness" doc:"Bar thickness (px)" minimum:"4" maximum:"30" default:"12"`
+	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
+}
+
+type AutoLockConfig struct {
+	Timeout float64 `json:"timeout" toml:"timeout" doc:"Seconds of stability before auto-lock" minimum:"1" maximum:"60" default:"10"`
+	Epsilon float64 `json:"epsilon" toml:"epsilon" doc:"Max change (g) to count as stable" minimum:"0.001" maximum:"1.0" default:"0.01"`
 }
 
 type VizConfig struct {
@@ -46,9 +73,7 @@ type ConfigRequest struct {
 
 func DefaultConfig() PinQuakeConfig {
 	return PinQuakeConfig{
-		BLE: BLEConfig{
-			DeviceName: "PinLevel",
-		},
+		BLE: BLEConfig{},
 		Waveform: WaveformConfig{
 			BufferSize:   256,
 			LogKnee:      0.02,
@@ -56,9 +81,24 @@ func DefaultConfig() PinQuakeConfig {
 			ForceRedG:    0.10,
 			AmpScale:     1.0,
 		},
+		Crosshair: CrosshairConfig{
+			ForceYellowG: 0.03,
+			ForceRedG:    0.10,
+			Smoothing:    0.7,
+			SegmentSize:  10,
+			BarThickness: 12,
+		},
 		Viz: VizConfig{
 			Width:  608,
 			Height: 1080,
+		},
+		AutoLock: AutoLockConfig{
+			Timeout: 10,
+			Epsilon: 0.01,
+		},
+		OBS: OBSConfig{
+			Host: "localhost",
+			Port: 4455,
 		},
 	}
 }
@@ -89,6 +129,11 @@ func (s *Server) registerConfigRoutes() {
 			return nil, huma.Error500InternalServerError(fmt.Sprintf("failed to save config: %v", err))
 		}
 		s.scanner.SetSwapXY(input.Body.Waveform.SwapXY)
+		s.scanner.SetAutoLockParams(
+			float32(input.Body.AutoLock.Epsilon),
+			time.Duration(input.Body.AutoLock.Timeout*float64(time.Second)),
+		)
+		s.obs.HandleConfigChange(input.Body.OBS.Host, input.Body.OBS.Port, input.Body.OBS.Password)
 		s.eventBus.Publish(events.ConfigChangedEvent{
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
@@ -109,14 +154,23 @@ func (s *Server) loadAppConfig() (PinQuakeConfig, error) {
 		return cfg, err
 	}
 	merged := cfg
-	if wrapper.App.BLE.DeviceName != "" {
+	if wrapper.App.BLE.DeviceAddress != "" {
 		merged.BLE = wrapper.App.BLE
 	}
 	if wrapper.App.Waveform.BufferSize > 0 {
 		merged.Waveform = wrapper.App.Waveform
 	}
+	if wrapper.App.Crosshair.ForceRedG > 0 {
+		merged.Crosshair = wrapper.App.Crosshair
+	}
 	if wrapper.App.Viz.Width > 0 {
 		merged.Viz = wrapper.App.Viz
+	}
+	if wrapper.App.AutoLock.Timeout > 0 {
+		merged.AutoLock = wrapper.App.AutoLock
+	}
+	if wrapper.App.OBS.Host != "" {
+		merged.OBS = wrapper.App.OBS
 	}
 	return merged, nil
 }
@@ -127,6 +181,17 @@ func (s *Server) syncSwapXY() {
 		return
 	}
 	s.scanner.SetSwapXY(cfg.Waveform.SwapXY)
+}
+
+func (s *Server) syncAutoLock() {
+	cfg, err := s.loadAppConfig()
+	if err != nil {
+		return
+	}
+	s.scanner.SetAutoLockParams(
+		float32(cfg.AutoLock.Epsilon),
+		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),
+	)
 }
 
 func (s *Server) saveAppConfig(cfg PinQuakeConfig) error {

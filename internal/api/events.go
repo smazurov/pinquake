@@ -22,6 +22,10 @@ func (s *Server) registerSSERoutes() {
 		"orientation":    events.OrientationEvent{},
 		"ble-status":     events.BLEStatusEvent{},
 		"config-changed": events.ConfigChangedEvent{},
+		"battery":        events.BatteryEvent{},
+		"heartbeat":      events.HeartbeatEvent{},
+		"log":            events.LogEntry{},
+		"obs-status":     events.OBSStatusEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
 		eventCh := make(chan any, 64)
 
@@ -29,6 +33,9 @@ func (s *Server) registerSSERoutes() {
 			events.SubscribeToChannel[events.OrientationEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.BLEStatusEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.ConfigChangedEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.BatteryEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.LogEntry](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.OBSStatusEvent](s.eventBus, eventCh),
 		}
 		defer func() {
 			for _, unsub := range unsubscribers {
@@ -37,11 +44,32 @@ func (s *Server) registerSSERoutes() {
 		}()
 
 		if err := send.Data(events.BLEStatusEvent{
-			Status:    string(s.scanner.GetState()),
+			Status:     string(s.scanner.GetState()),
+			DeviceName: s.scanner.GetDeviceName(),
+			Timestamp:  time.Now().Format(time.RFC3339Nano),
+		}); err != nil {
+			return
+		}
+
+		if err := send.Data(events.OBSStatusEvent{
+			Status:    string(s.obs.GetState()),
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		}); err != nil {
 			return
 		}
+
+		s.eventLogMu.Lock()
+		logSnapshot := make([]events.LogEntry, len(s.eventLog))
+		copy(logSnapshot, s.eventLog)
+		s.eventLogMu.Unlock()
+		for _, entry := range logSnapshot {
+			if err := send.Data(entry); err != nil {
+				return
+			}
+		}
+
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
 
 		for {
 			select {
@@ -49,6 +77,12 @@ func (s *Server) registerSSERoutes() {
 				return
 			case event := <-eventCh:
 				if err := send.Data(event); err != nil {
+					return
+				}
+			case <-ticker.C:
+				if err := send.Data(events.HeartbeatEvent{
+					Timestamp: time.Now().Format(time.RFC3339Nano),
+				}); err != nil {
 					return
 				}
 			}

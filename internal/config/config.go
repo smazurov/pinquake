@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"unicode"
+
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -68,17 +68,6 @@ func ApplyDefaults(opts any) {
 			}
 		}
 	}
-}
-
-func fieldNameToFlag(fieldName string) string {
-	var result []rune
-	for i, r := range fieldName {
-		if i > 0 && unicode.IsUpper(r) {
-			result = append(result, '-')
-		}
-		result = append(result, unicode.ToLower(r))
-	}
-	return string(result)
 }
 
 func getNestedValue(data map[string]any, path string) any {

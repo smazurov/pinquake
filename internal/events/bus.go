@@ -22,6 +22,12 @@ func (b *Bus) Publish(ev Event) {
 		event.Publish(b.dispatcher, e)
 	case ConfigChangedEvent:
 		event.Publish(b.dispatcher, e)
+	case BatteryEvent:
+		event.Publish(b.dispatcher, e)
+	case LogEntry:
+		event.Publish(b.dispatcher, e)
+	case OBSStatusEvent:
+		event.Publish(b.dispatcher, e)
 	}
 }
 
@@ -34,6 +40,12 @@ func (b *Bus) Subscribe(handler any) func() {
 	case func(BLEScanResultEvent):
 		return event.Subscribe(b.dispatcher, h)
 	case func(ConfigChangedEvent):
+		return event.Subscribe(b.dispatcher, h)
+	case func(BatteryEvent):
+		return event.Subscribe(b.dispatcher, h)
+	case func(LogEntry):
+		return event.Subscribe(b.dispatcher, h)
+	case func(OBSStatusEvent):
 		return event.Subscribe(b.dispatcher, h)
 	default:
 		return func() {}

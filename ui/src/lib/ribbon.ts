@@ -66,7 +66,7 @@ export function extractRibbonPoints(
   len: number,
   config: WaveformConfig,
 ): RibbonPoint[] {
-  const points: RibbonPoint[] = new Array(len);
+  const points = new Array<RibbonPoint>(len);
   for (let i = 0; i < len; i++) {
     const idx = (head + buffer.length - 1 - i) % buffer.length;
     const sample = buffer[idx]!;
@@ -230,7 +230,7 @@ export function buildRibbonEdges(
   const len = smooth.length;
   if (len === 0) return [];
 
-  const edges: EdgePair[] = new Array(len);
+  const edges = new Array<EdgePair>(len);
 
   for (let i = 0; i < len; i++) {
     let nx = 0;
