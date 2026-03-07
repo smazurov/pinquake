@@ -11,6 +11,11 @@ const (
 	pinlevelOrientationUUID = "706c7600-7069-6e6c-6576-656c00000002"
 )
 
+var (
+	pinlevelServiceParsedUUID     = mustParseUUID(pinlevelServiceUUID)
+	pinlevelOrientationParsedUUID = mustParseUUID(pinlevelOrientationUUID)
+)
+
 type PinLevel struct{}
 
 func NewPinLevel() Sensor { return &PinLevel{} }
@@ -18,23 +23,16 @@ func NewPinLevel() Sensor { return &PinLevel{} }
 func (p *PinLevel) Name() string { return "PinLevel" }
 
 func (p *PinLevel) ServiceUUIDs() []bluetooth.UUID {
-	uuid, _ := bluetooth.ParseUUID(pinlevelServiceUUID)
-	return []bluetooth.UUID{uuid}
+	return []bluetooth.UUID{pinlevelServiceParsedUUID}
 }
 
 func (p *PinLevel) Connect(device *bluetooth.Device, onOrientation func([]byte)) error {
-	svcUUID, err := bluetooth.ParseUUID(pinlevelServiceUUID)
-	if err != nil {
-		return fmt.Errorf("parse service UUID: %w", err)
-	}
-
-	svcs, err := device.DiscoverServices([]bluetooth.UUID{svcUUID})
+	svcs, err := device.DiscoverServices([]bluetooth.UUID{pinlevelServiceParsedUUID})
 	if err != nil || len(svcs) == 0 {
 		return fmt.Errorf("service discovery failed: %w", err)
 	}
 
-	charUUID, _ := bluetooth.ParseUUID(pinlevelOrientationUUID)
-	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{charUUID})
+	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{pinlevelOrientationParsedUUID})
 	if err != nil || len(chars) == 0 {
 		return fmt.Errorf("characteristic discovery failed: %w", err)
 	}

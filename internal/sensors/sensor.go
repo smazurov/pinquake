@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"errors"
+	"fmt"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -24,25 +25,41 @@ type Sensor interface {
 	Close()
 }
 
-var Registry = []func() Sensor{NewPinLevel, NewWT901}
+type SensorEntry struct {
+	Name        string
+	ServiceUUIDs []bluetooth.UUID
+	Factory     func() Sensor
+}
 
-func FactoryByName(name string) func() Sensor {
-	for _, factory := range Registry {
-		if factory().Name() == name {
-			return factory
+var Registry = []SensorEntry{
+	{Name: "PinLevel", ServiceUUIDs: []bluetooth.UUID{pinlevelServiceParsedUUID}, Factory: NewPinLevel},
+	{Name: "WT901", ServiceUUIDs: []bluetooth.UUID{wt901ServiceParsedUUID}, Factory: NewWT901},
+}
+
+func FactoryByName(name string) *SensorEntry {
+	for i := range Registry {
+		if Registry[i].Name == name {
+			return &Registry[i]
 		}
 	}
 	return nil
 }
 
-func Match(result bluetooth.ScanResult) func() Sensor {
-	for _, factory := range Registry {
-		s := factory()
-		for _, uuid := range s.ServiceUUIDs() {
+func Match(result bluetooth.ScanResult) *SensorEntry {
+	for i := range Registry {
+		for _, uuid := range Registry[i].ServiceUUIDs {
 			if result.HasServiceUUID(uuid) {
-				return factory
+				return &Registry[i]
 			}
 		}
 	}
 	return nil
+}
+
+func mustParseUUID(s string) bluetooth.UUID {
+	uuid, err := bluetooth.ParseUUID(s)
+	if err != nil {
+		panic(fmt.Sprintf("invalid UUID constant %q: %v", s, err))
+	}
+	return uuid
 }

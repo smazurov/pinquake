@@ -14,6 +14,12 @@ const (
 	wt901WriteCharUUID  = "0000FFE9-0000-1000-8000-00805F9A34FB"
 )
 
+var (
+	wt901ServiceParsedUUID = mustParseUUID(wt901ServiceUUID)
+	wt901NotifyParsedUUID  = mustParseUUID(wt901NotifyCharUUID)
+	wt901WriteParsedUUID   = mustParseUUID(wt901WriteCharUUID)
+)
+
 type WT901 struct {
 	writeChar      bluetooth.DeviceCharacteristic
 	respCh         chan []byte
@@ -25,24 +31,16 @@ func NewWT901() Sensor { return &WT901{} }
 func (w *WT901) Name() string { return "WT901" }
 
 func (w *WT901) ServiceUUIDs() []bluetooth.UUID {
-	uuid, _ := bluetooth.ParseUUID(wt901ServiceUUID)
-	return []bluetooth.UUID{uuid}
+	return []bluetooth.UUID{wt901ServiceParsedUUID}
 }
 
 func (w *WT901) Connect(device *bluetooth.Device, onOrientation func([]byte)) error {
-	svcUUID, err := bluetooth.ParseUUID(wt901ServiceUUID)
-	if err != nil {
-		return fmt.Errorf("parse service UUID: %w", err)
-	}
-
-	svcs, err := device.DiscoverServices([]bluetooth.UUID{svcUUID})
+	svcs, err := device.DiscoverServices([]bluetooth.UUID{wt901ServiceParsedUUID})
 	if err != nil || len(svcs) == 0 {
 		return fmt.Errorf("service discovery failed: %w", err)
 	}
 
-	notifyUUID, _ := bluetooth.ParseUUID(wt901NotifyCharUUID)
-	writeUUID, _ := bluetooth.ParseUUID(wt901WriteCharUUID)
-	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{notifyUUID, writeUUID})
+	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{wt901NotifyParsedUUID, wt901WriteParsedUUID})
 	if err != nil || len(chars) < 2 {
 		return fmt.Errorf("characteristic discovery failed: %w", err)
 	}
@@ -51,10 +49,10 @@ func (w *WT901) Connect(device *bluetooth.Device, onOrientation func([]byte)) er
 	var foundNotify, foundWrite bool
 	for _, c := range chars {
 		switch c.UUID() {
-		case notifyUUID:
+		case wt901NotifyParsedUUID:
 			notifyChar = c
 			foundNotify = true
-		case writeUUID:
+		case wt901WriteParsedUUID:
 			writeChar = c
 			foundWrite = true
 		}

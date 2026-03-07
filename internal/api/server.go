@@ -125,8 +125,8 @@ func (s *Server) AutoConnect() {
 			return
 		}
 		if cfg.BLE.SensorName != "" {
-			if factory := sensors.FactoryByName(cfg.BLE.SensorName); factory != nil {
-				s.scanner.SetSensorFactory(factory)
+			if entry := sensors.FactoryByName(cfg.BLE.SensorName); entry != nil {
+				s.scanner.SetSensorFactory(entry.Factory)
 			}
 		}
 		_ = s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName)
