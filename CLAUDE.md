@@ -10,3 +10,4 @@
 ## Go backend
 - Build: `go build ./...`
 - Lint: `golangci-lint run`
+- Use `go doc` to explore Go types/interfaces, not grep on module cache
