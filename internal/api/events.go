@@ -25,7 +25,6 @@ func (s *Server) registerSSERoutes() {
 		"battery":        events.BatteryEvent{},
 		"heartbeat":      events.HeartbeatEvent{},
 		"log":            events.LogEntry{},
-		"obs-status":     events.OBSStatusEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
 		eventCh := make(chan any, 64)
 
@@ -35,7 +34,6 @@ func (s *Server) registerSSERoutes() {
 			events.SubscribeToChannel[events.ConfigChangedEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.BatteryEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.LogEntry](s.eventBus, eventCh),
-			events.SubscribeToChannel[events.OBSStatusEvent](s.eventBus, eventCh),
 		}
 		defer func() {
 			for _, unsub := range unsubscribers {
@@ -47,13 +45,6 @@ func (s *Server) registerSSERoutes() {
 			Status:     string(s.scanner.GetState()),
 			DeviceName: s.scanner.GetDeviceName(),
 			Timestamp:  time.Now().Format(time.RFC3339Nano),
-		}); err != nil {
-			return
-		}
-
-		if err := send.Data(events.OBSStatusEvent{
-			Status:    string(s.obs.GetState()),
-			Timestamp: time.Now().Format(time.RFC3339Nano),
 		}); err != nil {
 			return
 		}

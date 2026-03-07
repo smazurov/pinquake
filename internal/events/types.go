@@ -8,7 +8,6 @@ const (
 	TypeBattery
 	TypeHeartbeat
 	TypeLogEntry
-	TypeOBSStatus
 )
 
 type Event interface {
@@ -79,11 +78,3 @@ type LogEntry struct {
 }
 
 func (e LogEntry) Type() uint32 { return TypeLogEntry }
-
-type OBSStatusEvent struct {
-	Status    string `json:"status"`
-	Reason    string `json:"reason,omitempty"`
-	Timestamp string `json:"timestamp"`
-}
-
-func (e OBSStatusEvent) Type() uint32 { return TypeOBSStatus }

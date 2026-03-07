@@ -28,12 +28,5 @@ height = 200
 timeout = 10.0
 epsilon = 0.01
 
-[app.obs]
-host = 'localhost'
-port = 4455
-password = ''
-scene_name = 'Scene'
-source_name = 'Browser 3'
-
 [server]
 port = ':8091'

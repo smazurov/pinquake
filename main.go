@@ -13,7 +13,6 @@ import (
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/config"
 	"github.com/smazurov/pinquake/internal/events"
-	"github.com/smazurov/pinquake/internal/obs"
 )
 
 type Options struct {
@@ -37,12 +36,9 @@ func main() {
 	bleStop := make(chan struct{})
 	go scanner.InitWithRetry(bleStop)
 
-	obsClient := obs.NewClient(eventBus, logger.With("module", "obs"))
-
 	server := api.NewServer(&api.Options{
 		EventBus:   eventBus,
 		Scanner:    scanner,
-		OBS:        obsClient,
 		ConfigPath: opts.Config,
 	})
 

@@ -12,7 +12,6 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/events"
-	"github.com/smazurov/pinquake/internal/obs"
 	"github.com/smazurov/pinquake/internal/sensors"
 	"github.com/smazurov/pinquake/ui"
 )
@@ -23,7 +22,6 @@ type Server struct {
 	httpServer *http.Server
 	eventBus   *events.Bus
 	scanner    *ble.Scanner
-	obs        *obs.Client
 	configPath string
 	eventLogMu sync.Mutex
 	eventLog   []events.LogEntry
@@ -32,7 +30,6 @@ type Server struct {
 type Options struct {
 	EventBus   *events.Bus
 	Scanner    *ble.Scanner
-	OBS        *obs.Client
 	ConfigPath string
 }
 
@@ -40,7 +37,7 @@ func NewServer(opts *Options) *Server {
 	mux := http.NewServeMux()
 
 	config := huma.DefaultConfig("PinQuake API", "1.0.0")
-	config.Info.Description = "BLE orientation data visualization for OBS"
+	config.Info.Description = "BLE orientation data visualization"
 	config.Servers = []*huma.Server{}
 
 	api := humago.New(mux, config)
@@ -54,7 +51,6 @@ func NewServer(opts *Options) *Server {
 		mux:        mux,
 		eventBus:   opts.EventBus,
 		scanner:    opts.Scanner,
-		obs:        opts.OBS,
 		configPath: opts.ConfigPath,
 	}
 
@@ -135,9 +131,6 @@ func (s *Server) AutoConnect() {
 		}
 		_ = s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName)
 	}
-	if cfg.OBS.Host != "" {
-		s.obs.AutoConnect(cfg.OBS.Host, cfg.OBS.Port, cfg.OBS.Password)
-	}
 }
 
 func (s *Server) log(level, message string) {
@@ -178,7 +171,6 @@ func (s *Server) registerRoutes() {
 	s.registerConfigRoutes()
 	s.registerSSERoutes()
 	s.registerBLERoutes()
-	s.registerOBSRoutes()
 }
 
 type HealthData struct {

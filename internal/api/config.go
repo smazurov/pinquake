@@ -18,15 +18,6 @@ type PinQuakeConfig struct {
 	Crosshair CrosshairConfig `json:"crosshair" toml:"crosshair"`
 	Viz       VizConfig       `json:"viz" toml:"viz"`
 	AutoLock  AutoLockConfig  `json:"auto_lock" toml:"auto_lock"`
-	OBS       OBSConfig       `json:"obs" toml:"obs"`
-}
-
-type OBSConfig struct {
-	Host       string `json:"host" toml:"host" default:"localhost" doc:"OBS WebSocket host"`
-	Port       int    `json:"port" toml:"port" default:"4455" doc:"OBS WebSocket port"`
-	Password   string `json:"password" toml:"password" doc:"OBS WebSocket password"`
-	SceneName  string `json:"scene_name" toml:"scene_name" doc:"OBS scene containing the browser source"`
-	SourceName string `json:"source_name" toml:"source_name" doc:"OBS browser source name to toggle"`
 }
 
 type BLEConfig struct {
@@ -96,10 +87,6 @@ func DefaultConfig() PinQuakeConfig {
 			Timeout: 10,
 			Epsilon: 0.01,
 		},
-		OBS: OBSConfig{
-			Host: "localhost",
-			Port: 4455,
-		},
 	}
 }
 
@@ -133,7 +120,6 @@ func (s *Server) registerConfigRoutes() {
 			float32(input.Body.AutoLock.Epsilon),
 			time.Duration(input.Body.AutoLock.Timeout*float64(time.Second)),
 		)
-		s.obs.HandleConfigChange(input.Body.OBS.Host, input.Body.OBS.Port, input.Body.OBS.Password)
 		s.eventBus.Publish(events.ConfigChangedEvent{
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
@@ -168,9 +154,6 @@ func (s *Server) loadAppConfig() (PinQuakeConfig, error) {
 	}
 	if wrapper.App.AutoLock.Timeout > 0 {
 		merged.AutoLock = wrapper.App.AutoLock
-	}
-	if wrapper.App.OBS.Host != "" {
-		merged.OBS = wrapper.App.OBS
 	}
 	return merged, nil
 }
