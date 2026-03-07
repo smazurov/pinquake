@@ -1,47 +1,31 @@
 import { useEffect, useState, useCallback } from "react";
-import { getConfig, getOpenAPISchema } from "../lib/api";
-import type { PinQuakeConfig } from "../lib/api";
-import type { SSEStatus } from "../lib/api_sse";
+import { api } from "../lib/api";
+import type { components } from "../lib/api.generated";
+
+type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
+import type { SSEStatus } from "../lib/api";
 import type { FieldMeta } from "../lib/schema";
 import { extractAllFieldMeta, extractSectionSchema } from "../lib/schema";
+import { getErrorMessage } from "../lib/errors";
 import { useAutoSave } from "../lib/useAutoSave";
 import SimpleNavbar from "../components/SimpleNavbar";
 import Container from "../components/Container";
 import { Card } from "../components/Card";
 import BLEControl from "../components/BLEControl";
-import OBSControl from "../components/OBSControl";
-import type { OBSState } from "../components/OBSControl";
 import ConnectionBanner from "../components/ConnectionBanner";
 import Collapsible from "../components/Collapsible";
-import SchemaForm from "../components/SchemaForm";
+import { ErrorAlert } from "../components/ErrorAlert";
+import { SchemaSection } from "../components/SchemaSection";
 import { InputField } from "../components/InputField";
 
 type PreviewTab = "canvas" | "crosshair";
 
-type ConfigSection = "waveform" | "crosshair" | "viz" | "obs";
+type ConfigSection = "waveform" | "crosshair" | "viz";
 
 interface SectionSchema {
   waveform: FieldMeta[];
   crosshair: FieldMeta[];
 }
-
-const FALLBACK_WAVEFORM_FIELDS: FieldMeta[] = [
-  { key: "buffer_size", type: "number", description: "Ring buffer sample count", min: 32, max: 512, default: 256 },
-  { key: "log_knee", type: "slider", description: "Log compression knee", min: 0.001, max: 0.1, step: 0.001, default: 0.02 },
-  { key: "force_yellow_g", type: "slider", description: "Yellow threshold (g)", min: 0.01, max: 0.5, step: 0.01, default: 0.03 },
-  { key: "force_red_g", type: "slider", description: "Red threshold (g)", min: 0.01, max: 1.0, step: 0.01, default: 0.1 },
-  { key: "amp_scale", type: "slider", description: "Amplitude multiplier", min: 0.1, max: 5.0, step: 0.1, default: 1.0 },
-  { key: "swap_xy", type: "checkbox", description: "Swap X and Y axes", default: false },
-];
-
-const FALLBACK_CROSSHAIR_FIELDS: FieldMeta[] = [
-  { key: "force_yellow_g", type: "slider", description: "Yellow threshold (g)", min: 0.01, max: 0.5, step: 0.01, default: 0.03 },
-  { key: "force_red_g", type: "slider", description: "Red threshold (g)", min: 0.01, max: 1.0, step: 0.01, default: 0.1 },
-  { key: "smoothing", type: "slider", description: "Exponential smoothing factor", min: 0, max: 1, step: 0.05, default: 0.7 },
-  { key: "segment_size", type: "slider", description: "Bar segment size (px)", min: 2, max: 30, step: 1, default: 10 },
-  { key: "bar_thickness", type: "slider", description: "Bar thickness (px)", min: 4, max: 30, step: 1, default: 12 },
-  { key: "swap_xy", type: "checkbox", description: "Swap X and Y axes", default: false },
-];
 
 function SaveStatus({ status, error }: Readonly<{ status: string; error: string | null }>) {
   if (status === "saving") {
@@ -61,37 +45,37 @@ export default function ConfigRoute() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTab>("canvas");
   const [sseStatus, setSSEStatus] = useState<SSEStatus>("connecting");
-  const [obsState, setOBSState] = useState<OBSState>("disconnected");
-  const [sectionSchema, setSectionSchema] = useState<SectionSchema>({
-    waveform: FALLBACK_WAVEFORM_FIELDS,
-    crosshair: FALLBACK_CROSSHAIR_FIELDS,
-  });
+  const [sectionSchema, setSectionSchema] = useState<SectionSchema | null>(null);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
 
   const { status: saveStatus, error: saveError } = useAutoSave(config);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
 
-    getConfig()
-      .then(setConfig)
-      .catch((error: unknown) =>
-        setLoadError(error instanceof Error ? error.message : String(error)),
-      );
+    api.GET("/api/config").then(({ data, error }) => {
+      if (error) { setLoadError(error.detail ?? "Failed to load config"); return; }
+      setConfig(data);
+    });
 
-    getOpenAPISchema()
+    fetch("/openapi.json")
+      .then((r) => r.json() as Promise<Record<string, unknown>>)
       .then((schema) => {
         const waveformSchema = extractSectionSchema(schema, "waveform");
         const crosshairSchema = extractSectionSchema(schema, "crosshair");
+        if (!waveformSchema || !crosshairSchema) {
+          setSchemaError("Schema missing waveform or crosshair section");
+          return;
+        }
         setSectionSchema({
-          waveform: waveformSchema
-            ? extractAllFieldMeta(waveformSchema)
-            : FALLBACK_WAVEFORM_FIELDS,
-          crosshair: crosshairSchema
-            ? extractAllFieldMeta(crosshairSchema)
-            : FALLBACK_CROSSHAIR_FIELDS,
+          waveform: extractAllFieldMeta(waveformSchema),
+          crosshair: extractAllFieldMeta(crosshairSchema),
         });
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        console.error("Failed to fetch OpenAPI schema:", error);
+        setSchemaError(getErrorMessage(error));
+      });
   }, []);
 
   const updateSection = useCallback(
@@ -131,29 +115,12 @@ export default function ConfigRoute() {
       <Container>
         <div className="flex gap-8 pb-8">
           <div className="w-full max-w-md space-y-4 shrink-0">
-            {(loadError ?? saveError) && (
-              <div className="rounded bg-red-900/50 p-3 text-sm text-red-300">
-                {loadError ?? saveError}
-              </div>
+            {(loadError ?? saveError ?? schemaError) && (
+              <ErrorAlert message={(loadError ?? saveError ?? schemaError)!} />
             )}
 
             <BLEControl
               onSSEStatus={setSSEStatus}
-              onOBSStatus={(status) => setOBSState(status as OBSState)}
-            />
-            <OBSControl
-              obsState={obsState}
-              config={config}
-              onConnectionSave={(host, port, pw) => {
-                setConfig((prev) => {
-                  if (!prev) return prev;
-                  return { ...prev, obs: { ...prev.obs, host, port, password: pw } };
-                });
-              }}
-              onSelectSource={(sceneName, sourceName) => {
-                updateSection("obs" as ConfigSection, "scene_name", sceneName);
-                updateSection("obs" as ConfigSection, "source_name", sourceName);
-              }}
             />
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wider">
@@ -162,21 +129,21 @@ export default function ConfigRoute() {
               <SaveStatus status={saveStatus} error={saveError} />
             </div>
 
-            <Collapsible id="waveform" title="Waveform">
-              <SchemaForm
-                fields={sectionSchema.waveform}
-                values={config.waveform as unknown as Record<string, unknown>}
-                onChange={(key, value) => updateSection("waveform", key, value)}
-              />
-            </Collapsible>
+            <SchemaSection
+              id="waveform"
+              title="Waveform"
+              fields={sectionSchema?.waveform}
+              values={config.waveform as unknown as Record<string, unknown>}
+              onChange={(key, value) => updateSection("waveform", key, value)}
+            />
 
-            <Collapsible id="crosshair" title="Crosshair">
-              <SchemaForm
-                fields={sectionSchema.crosshair}
-                values={config.crosshair as unknown as Record<string, unknown>}
-                onChange={(key, value) => updateSection("crosshair", key, value)}
-              />
-            </Collapsible>
+            <SchemaSection
+              id="crosshair"
+              title="Crosshair"
+              fields={sectionSchema?.crosshair}
+              values={config.crosshair as unknown as Record<string, unknown>}
+              onChange={(key, value) => updateSection("crosshair", key, value)}
+            />
 
             <Collapsible id="dimensions" title="Dimensions">
               <div className="grid grid-cols-2 gap-4">

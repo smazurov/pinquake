@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +23,9 @@ type Options struct {
 }
 
 func main() {
+	dumpOpenAPI := flag.Bool("openapi", false, "Dump OpenAPI spec to stdout and exit")
+	flag.Parse()
+
 	opts := &Options{}
 	config.ApplyDefaults(opts)
 
@@ -34,13 +39,25 @@ func main() {
 
 	scanner := ble.NewScanner(eventBus, logger.With("module", "ble"))
 	bleStop := make(chan struct{})
-	go scanner.InitWithRetry(bleStop)
+	if !*dumpOpenAPI {
+		go scanner.InitWithRetry(bleStop)
+	}
 
 	server := api.NewServer(&api.Options{
 		EventBus:   eventBus,
 		Scanner:    scanner,
 		ConfigPath: opts.Config,
 	})
+
+	if *dumpOpenAPI {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(server.HumaAPI().OpenAPI()); err != nil {
+			logger.Error("Failed to encode OpenAPI spec", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	go server.AutoConnect()
 

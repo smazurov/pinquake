@@ -61,7 +61,7 @@ const commonRules = {
 
 module.exports = [
   {
-    ignores: ["**/dist", "**/build", "**/node_modules"],
+    ignores: ["**/dist", "**/build", "**/node_modules", "**/*.generated.ts"],
   },
   // Base JavaScript recommended rules
   js.configs.recommended,

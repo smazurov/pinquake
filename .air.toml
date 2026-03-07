@@ -5,7 +5,7 @@ tmp_dir = "tmp"
 [build]
   args_bin = []
   bin = "./tmp/main"
-  cmd = "go build -o ./tmp/main ."
+  cmd = "go build -tags ui_embed -o ./tmp/main ."
   delay = 1000
   exclude_dir = ["assets", "tmp", "vendor", "testdata", "ui"]
   exclude_file = ["config.toml"]
@@ -20,7 +20,7 @@ tmp_dir = "tmp"
   log = "build-errors.log"
   poll = false
   poll_interval = 0
-  post_cmd = []
+  post_cmd = ["./tmp/main -openapi > openapi.json && cd ui && npx openapi-typescript ../openapi.json -o src/lib/api.generated.ts"]
   pre_cmd = []
   rerun = false
   rerun_delay = 500

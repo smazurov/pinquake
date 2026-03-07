@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { updateConfig } from "./api";
-import type { PinQuakeConfig } from "./api";
+import { api } from "./api";
+import type { components } from "./api.generated";
+
+type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
 
 export type AutoSaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -28,14 +30,14 @@ export function useAutoSave(
     if (!cfg) return;
     setStatus("saving");
     setError(null);
-    try {
-      await updateConfig(cfg);
+    const { error: err } = await api.PUT("/api/config", { body: cfg });
+    if (err) {
+      setError(err.detail ?? "Save failed");
+      setStatus("error");
+    } else {
       lastSavedRef.current = JSON.stringify(cfg);
       setStatus("saved");
       setTimeout(() => setStatus((s) => (s === "saved" ? "idle" : s)), 1500);
-    } catch (error_: unknown) {
-      setError(error_ instanceof Error ? error_.message : String(error_));
-      setStatus("error");
     }
   }, []);
 

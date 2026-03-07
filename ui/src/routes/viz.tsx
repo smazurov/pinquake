@@ -1,18 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import Waveform from "../components/Waveform";
 import type { WaveformHandle } from "../components/Waveform";
-import { SSEClient } from "../lib/api_sse";
-import { getConfig } from "../lib/api";
+import { SSEClient, api } from "../lib/api";
 
 const DEFAULT_WIDTH = 608;
 const DEFAULT_HEIGHT = 1080;
-
-interface OrientationEvent {
-  gx: number;
-  gy: number;
-  gz: number;
-  timestamp: string;
-}
 
 interface WaveformParams {
   logKnee: number;
@@ -37,8 +29,9 @@ export default function VizRoute() {
   const [waveformConfig, setWaveformConfig] = useState<WaveformParams | undefined>();
 
   const fetchConfig = useCallback(() => {
-    getConfig()
-      .then((cfg) => {
+    api.GET("/api/config")
+      .then(({ data: cfg }) => {
+        if (!cfg) return;
         setWaveformConfig({
           logKnee: cfg.waveform.log_knee,
           forceYellowG: cfg.waveform.force_yellow_g,
@@ -56,7 +49,7 @@ export default function VizRoute() {
       endpoint: "/api/events",
     });
 
-    client.on<OrientationEvent>("orientation", (data) => {
+    client.on("orientation", (data) => {
       waveformRef.current?.pushSample(data.gx, data.gy);
     });
 

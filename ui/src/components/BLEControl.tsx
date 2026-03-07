@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { LinkIcon, LinkSlashIcon, NoSymbolIcon, BoltIcon, Battery0Icon, Battery50Icon, Battery100Icon, LockClosedIcon, LockOpenIcon, ArrowPathIcon } from "@heroicons/react/20/solid";
-import { SSEClient } from "../lib/api_sse";
-import type { SSEStatus } from "../lib/api_sse";
-import { connectDevice, disconnectDevice, lockFrame, unlockFrame, forceLockFrame, getFrameState } from "../lib/api";
-import type { BLEScanResult, LogEntry } from "../lib/api";
+import { SSEClient, api } from "../lib/api";
+import type { SSEStatus } from "../lib/api";
+import type { components } from "../lib/api.generated";
+
+type BLEScanResult = components["schemas"]["BLEScanResultEvent"];
+type LogEntry = components["schemas"]["LogEntry"];
+import { ErrorAlert } from "./ErrorAlert";
 import Collapsible from "./Collapsible";
+
+const ICON_CLS = "h-[18px] w-[18px]";
 
 type BLEState = "idle" | "scanning" | "connecting" | "connected" | "disconnected";
 
@@ -35,7 +40,7 @@ function batteryProps(percent: number) {
 
 function BatteryIndicator({ percent }: Readonly<{ percent: number }>) {
   const { Icon, color } = batteryProps(percent);
-  return <Icon className={`h-[18px] w-[18px] ${color}`} />;
+  return <Icon className={`${ICON_CLS} ${color}`} />;
 }
 
 const levelColor: Record<string, string> = {
@@ -49,7 +54,7 @@ function formatTime(timestamp: string): string {
   return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
-export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void; onOBSStatus?: (status: string) => void }>) {
+export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void }>) {
   const [bleState, setBleState] = useState<BLEState>("idle");
   const [scanResults, setScanResults] = useState<Map<string, BLEScanResult>>(
     new Map(),
@@ -63,13 +68,10 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
   const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
-  const mainSSE = useRef<SSEClient | null>(null);
-  const scanSSE = useRef<SSEClient | null>(null);
+  const mainSSE = useRef<SSEClient<"/api/events"> | null>(null);
+  const scanSSE = useRef<SSEClient<"/api/ble/scan"> | null>(null);
   const onSSEStatusRef = useRef(onSSEStatus);
   useEffect(() => { onSSEStatusRef.current = onSSEStatus; }, [onSSEStatus]);
-  const onOBSStatusRef = useRef(onOBSStatus);
-  useEffect(() => { onOBSStatusRef.current = onOBSStatus; }, [onOBSStatus]);
-
   useEffect(() => {
     const client = new SSEClient({
       endpoint: "/api/events",
@@ -80,7 +82,7 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
         }
       },
     });
-    client.on<{ status: string; reason?: string; device_name?: string }>("ble-status", (data) => {
+    client.on("ble-status", (data) => {
       setBleState(data.status as BLEState);
       if (data.status === "disconnected") {
         setDisconnectReason(data.reason ?? null);
@@ -98,17 +100,17 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
         setScanResults(new Map());
       }
       if (data.status === "connected") {
-        void getFrameState().then((s) => setFrameLocked(s.locked));
+        void api.GET("/api/ble/frame").then(({ data }) => { if (data) setFrameLocked(data.locked); });
       }
     });
-    client.on<{ battery_percent: number; battery_volts: number; charging: boolean }>("battery", (data) => {
-      setBattery({ percent: data.battery_percent, volts: data.battery_volts, charging: data.charging });
+    client.on("battery", (data) => {
+      setBattery((prev) => {
+        if (prev && prev.percent === data.battery_percent && prev.volts === data.battery_volts && prev.charging === data.charging) return prev;
+        return { percent: data.battery_percent, volts: data.battery_volts, charging: data.charging };
+      });
     });
-    client.on<LogEntry>("log", (data) => {
-      setLogEntries((prev) => [...prev, data]);
-    });
-    client.on<{ status: string }>("obs-status", (data) => {
-      onOBSStatusRef.current?.(data.status);
+    client.on("log", (data) => {
+      setLogEntries((prev) => [...prev, data].slice(-200));
     });
     client.connect();
     mainSSE.current = client;
@@ -133,7 +135,7 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
         setError("BLE scan failed — check adapter");
       },
     });
-    client.on<BLEScanResult>("device", (data) => {
+    client.on("device", (data) => {
       setScanResults((prev) => {
         const next = new Map(prev);
         next.set(data.address, data);
@@ -157,46 +159,41 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
     async (device: { address: string; name: string }) => {
       stopScan();
       setError(null);
-      try {
-        await connectDevice(device.address, device.name);
-      } catch (error_: unknown) {
-        setError(error_ instanceof Error ? error_.message : String(error_));
-      }
+      const { error: err } = await api.POST("/api/ble/connect", {
+        body: { address: device.address, name: device.name },
+      });
+      if (err) setError(err.detail ?? "Connection failed");
     },
     [stopScan],
   );
 
   const handleToggleFrameLock = useCallback(async () => {
-    try {
-      if (frameLocked) {
-        await unlockFrame();
-        setFrameLocked(false);
-      } else {
-        await lockFrame();
-        setFrameLocked(true);
-      }
-    } catch (error_: unknown) {
-      setError(error_ instanceof Error ? error_.message : String(error_));
-    }
+    const { error: err } = frameLocked
+      ? await api.POST("/api/ble/frame/unlock")
+      : await api.POST("/api/ble/frame/lock");
+    if (err) { setError(err.detail ?? "Frame lock failed"); return; }
+    setFrameLocked(!frameLocked);
   }, [frameLocked]);
 
   const handleDisconnect = useCallback(async () => {
     setError(null);
     setDisconnecting(true);
-    try {
-      await disconnectDevice();
-    } catch (error_: unknown) {
-      setError(error_ instanceof Error ? error_.message : String(error_));
+    const { error: err } = await api.POST("/api/ble/disconnect");
+    if (err) {
+      setError(err.detail ?? "Disconnect failed");
       setDisconnecting(false);
     }
   }, []);
 
-  const sortedResults = [...scanResults.values()].sort((a, b) => {
-    const aKnown = a.sensor_name ? 1 : 0;
-    const bKnown = b.sensor_name ? 1 : 0;
-    if (aKnown !== bKnown) return bKnown - aKnown;
-    return b.rssi - a.rssi;
-  });
+  const sortedResults = useMemo(() =>
+    [...scanResults.values()].sort((a, b) => {
+      const aKnown = a.sensor_name ? 1 : 0;
+      const bKnown = b.sensor_name ? 1 : 0;
+      if (aKnown !== bKnown) return bKnown - aKnown;
+      return b.rssi - a.rssi;
+    }), [scanResults]);
+
+  const reversedLog = useMemo(() => [...logEntries].reverse(), [logEntries]);
 
   const isIdle = (bleState === "idle" || bleState === "disconnected") && !scanning;
   const isConnecting = bleState === "connecting";
@@ -228,15 +225,15 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
               }`}
               title={frameLocked ? "Disable auto-lock" : "Enable auto-lock"}
             >
-              {frameLocked ? <LockClosedIcon className="h-[18px] w-[18px]" /> : <LockOpenIcon className="h-[18px] w-[18px]" />}
+              {frameLocked ? <LockClosedIcon className={ICON_CLS} /> : <LockOpenIcon className={ICON_CLS} />}
             </button>
             {frameLocked && (
               <button
-                onClick={(e) => { e.stopPropagation(); void forceLockFrame(); }}
+                onClick={(e) => { e.stopPropagation(); void api.POST("/api/ble/frame/force-lock"); }}
                 className="text-slate-400 hover:text-slate-300 transition-colors"
                 title="Force lock now"
               >
-                <ArrowPathIcon className="h-[18px] w-[18px]" />
+                <ArrowPathIcon className={ICON_CLS} />
               </button>
             )}
           </span>
@@ -251,7 +248,7 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
             className="text-blue-400 hover:text-blue-300 transition-colors"
             title="Scan for devices"
           >
-            <LinkIcon className="h-[18px] w-[18px]" />
+            <LinkIcon className={ICON_CLS} />
           </button>
         )}
         {scanning && (
@@ -260,12 +257,12 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
             className="text-yellow-400 hover:text-yellow-300 transition-colors"
             title="Stop scan"
           >
-            <NoSymbolIcon className="h-[18px] w-[18px]" />
+            <NoSymbolIcon className={ICON_CLS} />
           </button>
         )}
         {isConnecting && (
           <span className="text-slate-400" title="Connecting...">
-            <LinkIcon className="h-[18px] w-[18px] animate-pulse" />
+            <LinkIcon className={`${ICON_CLS} animate-pulse`} />
           </span>
         )}
         {isConnected && (
@@ -275,7 +272,7 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
             title="Disconnect"
             disabled={disconnecting}
           >
-            <LinkSlashIcon className="h-[18px] w-[18px]" />
+            <LinkSlashIcon className={ICON_CLS} />
           </button>
         )}
       </div>
@@ -285,8 +282,8 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
   return (
     <Collapsible id="ble" header={headerContent} defaultOpen={true}>
       {error && (
-        <div className="rounded bg-red-900/50 px-3 py-2 text-xs text-red-300 mb-3">
-          {error}
+        <div className="mb-3">
+          <ErrorAlert message={error} />
         </div>
       )}
 
@@ -320,9 +317,9 @@ export default function BLEControl({ onSSEStatus, onOBSStatus }: Readonly<{ onSS
         </div>
       )}
 
-      {logEntries.length > 0 && (
+      {reversedLog.length > 0 && (
         <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs border-t border-slate-700 pt-3">
-          {[...logEntries].reverse().map((entry, i) => (
+          {reversedLog.map((entry, i) => (
             <div key={i} className={levelColor[entry.level] ?? "text-slate-400"}>
               <span className="text-slate-500 mr-2">{formatTime(entry.timestamp)}</span>
               {entry.message}

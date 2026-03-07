@@ -1,198 +1,199 @@
+import createClient from "openapi-fetch";
+import type { paths } from "./api.generated";
+
 export const API_BASE_URL = "";
 
-async function extractErrorDetail(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { detail?: string };
-    if (body.detail) return body.detail;
-  } catch {
-    // ignore parse errors
+export const api = createClient<paths>({ baseUrl: API_BASE_URL });
+
+// SSE type helpers — extract event→data map from generated path types
+type GetContent<P extends keyof paths> =
+  paths[P] extends { get: { responses: { 200: { content: infer C } } } } ? C : never;
+
+type SSEPath = {
+  [P in keyof paths]: GetContent<P> extends { "text/event-stream": unknown }
+    ? P
+    : never;
+}[keyof paths];
+
+type SSEStream<P extends SSEPath> = GetContent<P> extends {
+  "text/event-stream": infer S;
+}
+  ? S
+  : never;
+
+type SSEEvent<P extends SSEPath> = SSEStream<P> extends (infer E)[] ? E : never;
+
+type SSEEventMap<P extends SSEPath> = {
+  [E in SSEEvent<P> as E extends { event: infer N extends string }
+    ? N
+    : never]: E extends { data: infer D } ? D : never;
+};
+
+export type SSEStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "reconnecting";
+
+const INITIAL_RECONNECT_DELAY = 2000;
+const MAX_RECONNECT_DELAY = 30000;
+const STALENESS_CHECK_INTERVAL = 5000;
+const STALENESS_THRESHOLD = 20000;
+
+export interface SSEClientConfig<P extends SSEPath> {
+  endpoint: P;
+  onStatusChange?: (status: SSEStatus) => void;
+  onConnect?: () => void;
+  onError?: (willReconnect: boolean) => void;
+}
+
+type TypedEventHandler<T> = (data: T) => void;
+
+export class SSEClient<P extends SSEPath> {
+  private eventSource: EventSource | null = null;
+  private reconnectTimeout: number | null = null;
+  private stalenessInterval: number | null = null;
+  private lastEventTime = 0;
+  private reconnectDelay = INITIAL_RECONNECT_DELAY;
+  private readonly typedHandlers: Map<string, TypedEventHandler<unknown>> =
+    new Map();
+  private status: SSEStatus = "disconnected";
+
+  constructor(private readonly config: SSEClientConfig<P>) {}
+
+  connect(): void {
+    if (this.eventSource) return;
+
+    this.setStatus("connecting");
+
+    const sseUrl = `${API_BASE_URL}${this.config.endpoint}`;
+    this.eventSource = new EventSource(sseUrl);
+
+    this.eventSource.onopen = () => {
+      const wasReconnecting = this.status === "reconnecting";
+      this.reconnectDelay = INITIAL_RECONNECT_DELAY;
+      this.lastEventTime = Date.now();
+      this.setStatus("connected");
+      this.config.onConnect?.();
+      this.startStalenessWatchdog();
+      if (wasReconnecting) {
+        console.log(`SSE reconnected to ${this.config.endpoint}`);
+      } else {
+        console.log(`SSE connected to ${this.config.endpoint}`);
+      }
+    };
+
+    this.eventSource.addEventListener("heartbeat", () => {
+      this.lastEventTime = Date.now();
+    });
+
+    for (const [eventType, handler] of this.typedHandlers) {
+      this.attachTypedHandler(eventType, handler);
+    }
+
+    this.eventSource.onerror = () => {
+      this.teardownAndReconnect(
+        `SSE disconnected from ${this.config.endpoint}, reconnecting in ${this.reconnectDelay}ms`,
+      );
+    };
   }
-  return `API request failed: ${response.statusText}`;
-}
 
-export async function apiGet<T>(endpoint: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.statusText}`);
+  disconnect(): void {
+    this.stopStalenessWatchdog();
+    if (this.reconnectTimeout) {
+      window.clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+    this.setStatus("disconnected");
   }
-  return response.json() as Promise<T>;
-}
 
-export async function apiPost<T>(endpoint: string, data?: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: data !== undefined ? JSON.stringify(data) : undefined,
-  });
-  if (!response.ok) {
-    const detail = await extractErrorDetail(response);
-    throw new Error(detail);
+  getStatus(): SSEStatus {
+    return this.status;
   }
-  return response.json() as Promise<T>;
-}
 
-export async function apiPut<T>(endpoint: string, data: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.statusText}`);
+  on<K extends keyof SSEEventMap<P> & string>(
+    eventType: K,
+    handler: TypedEventHandler<SSEEventMap<P>[K]>,
+  ): void {
+    this.typedHandlers.set(
+      eventType,
+      handler as TypedEventHandler<unknown>,
+    );
+    if (this.eventSource) {
+      this.attachTypedHandler(
+        eventType,
+        handler as TypedEventHandler<unknown>,
+      );
+    }
   }
-  return response.json() as Promise<T>;
-}
 
-export interface PinQuakeConfig {
-  ble: {
-    device_address: string;
-    device_name: string;
-  };
-  waveform: {
-    buffer_size: number;
-    log_knee: number;
-    force_yellow_g: number;
-    force_red_g: number;
-    amp_scale: number;
-    swap_xy: boolean;
-  };
-  crosshair: {
-    force_yellow_g: number;
-    force_red_g: number;
-    smoothing: number;
-    segment_size: number;
-    bar_thickness: number;
-    swap_xy: boolean;
-  };
-  viz: {
-    width: number;
-    height: number;
-  };
-  auto_lock: {
-    timeout: number;
-    epsilon: number;
-  };
-  obs: {
-    host: string;
-    port: number;
-    password: string;
-    scene_name: string;
-    source_name: string;
-  };
-}
+  off(eventType: keyof SSEEventMap<P> & string): void {
+    this.typedHandlers.delete(eventType);
+  }
 
-export async function getConfig(): Promise<PinQuakeConfig> {
-  return apiGet<PinQuakeConfig>("/api/config");
-}
+  private attachTypedHandler(
+    eventType: string,
+    handler: TypedEventHandler<unknown>,
+  ): void {
+    this.eventSource?.addEventListener(eventType, (event: MessageEvent) => {
+      this.lastEventTime = Date.now();
+      try {
+        const data: unknown = JSON.parse(String(event.data));
+        handler(data);
+      } catch (error) {
+        console.error(`Error parsing ${eventType} event:`, error);
+      }
+    });
+  }
 
-export async function getOpenAPISchema(): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>("/openapi.json");
-}
+  private startStalenessWatchdog(): void {
+    this.stopStalenessWatchdog();
+    this.stalenessInterval = window.setInterval(() => {
+      if (
+        this.status === "connected" &&
+        Date.now() - this.lastEventTime > STALENESS_THRESHOLD
+      ) {
+        this.teardownAndReconnect(
+          `SSE stale (no events for ${STALENESS_THRESHOLD / 1000}s), reconnecting`,
+        );
+      }
+    }, STALENESS_CHECK_INTERVAL);
+  }
 
-export async function updateConfig(
-  config: PinQuakeConfig,
-): Promise<PinQuakeConfig> {
-  return apiPut<PinQuakeConfig>("/api/config", config);
-}
+  private stopStalenessWatchdog(): void {
+    if (this.stalenessInterval) {
+      window.clearInterval(this.stalenessInterval);
+      this.stalenessInterval = null;
+    }
+  }
 
-export interface HealthData {
-  status: string;
-  message: string;
-}
+  private setStatus(status: SSEStatus): void {
+    this.status = status;
+    this.config.onStatusChange?.(status);
+  }
 
-export async function getHealth(): Promise<HealthData> {
-  return apiGet<HealthData>("/api/health");
-}
+  private teardownAndReconnect(reason: string): void {
+    this.stopStalenessWatchdog();
+    this.eventSource?.close();
+    this.eventSource = null;
+    this.setStatus("reconnecting");
+    this.config.onError?.(true);
+    console.warn(reason);
+    this.scheduleReconnect();
+  }
 
-export interface LogEntry {
-  message: string;
-  level: string;
-  timestamp: string;
-}
-
-export interface BLEScanResult {
-  address: string;
-  name: string;
-  rssi: number;
-  sensor_name?: string;
-  timestamp: string;
-}
-
-export interface BLEStateResponse {
-  state: "idle" | "scanning" | "connecting" | "connected";
-}
-
-export async function connectDevice(
-  address: string,
-  name: string,
-): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/ble/connect", { address, name });
-}
-
-export async function disconnectDevice(): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/ble/disconnect");
-}
-
-export async function getBLEState(): Promise<BLEStateResponse> {
-  return apiGet<BLEStateResponse>("/api/ble/state");
-}
-
-export interface FrameState {
-  locked: boolean;
-}
-
-export async function lockFrame(): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/ble/frame/lock");
-}
-
-export async function unlockFrame(): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/ble/frame/unlock");
-}
-
-export async function forceLockFrame(): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/ble/frame/force-lock");
-}
-
-export async function getFrameState(): Promise<FrameState> {
-  return apiGet<FrameState>("/api/ble/frame");
-}
-
-export interface OBSStateResponse {
-  status: string;
-}
-
-export interface OBSSource {
-  scene_name: string;
-  source_name: string;
-  url: string;
-  scene_item_id: number;
-  enabled: boolean;
-}
-
-export async function getOBSState(): Promise<OBSStateResponse> {
-  return apiGet<OBSStateResponse>("/api/obs/state");
-}
-
-export async function connectOBS(
-  host: string,
-  port: number,
-  password: string,
-): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/obs/connect", { host, port, password });
-}
-
-export async function disconnectOBS(): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/obs/disconnect");
-}
-
-export async function getOBSSources(): Promise<OBSSource[]> {
-  return apiGet<OBSSource[]>("/api/obs/sources");
-}
-
-export async function toggleOBSSource(
-  enabled: boolean,
-): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>("/api/obs/toggle", { enabled });
+  private scheduleReconnect(): void {
+    if (this.reconnectTimeout) {
+      window.clearTimeout(this.reconnectTimeout);
+    }
+    const currentDelay = this.reconnectDelay;
+    this.reconnectTimeout = window.setTimeout(() => {
+      this.connect();
+      this.reconnectDelay = Math.min(currentDelay * 2, MAX_RECONNECT_DELAY);
+    }, currentDelay);
+  }
 }

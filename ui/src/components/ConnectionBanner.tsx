@@ -1,4 +1,4 @@
-import type { SSEStatus } from "../lib/api_sse";
+import type { SSEStatus } from "../lib/api";
 
 export default function ConnectionBanner({ status }: Readonly<{ status: SSEStatus }>) {
   const visible = status === "reconnecting";

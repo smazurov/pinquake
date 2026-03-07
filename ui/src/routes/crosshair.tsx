@@ -1,18 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import Crosshair from "../components/Crosshair";
 import type { CrosshairHandle, CrosshairConfig } from "../components/Crosshair";
-import { SSEClient } from "../lib/api_sse";
-import { getConfig } from "../lib/api";
+import { SSEClient, api } from "../lib/api";
 
 const DEFAULT_WIDTH = 608;
 const DEFAULT_HEIGHT = 1080;
-
-interface OrientationEvent {
-  gx: number;
-  gy: number;
-  gz: number;
-  timestamp: string;
-}
 
 function getCanvasDimensions(): { width: number; height: number } {
   const params = new URLSearchParams(window.location.search);
@@ -30,8 +22,9 @@ export default function CrosshairRoute() {
   const [crosshairConfig, setCrosshairConfig] = useState<CrosshairConfig | undefined>();
 
   const fetchConfig = useCallback(() => {
-    getConfig()
-      .then((cfg) => {
+    api.GET("/api/config")
+      .then(({ data: cfg }) => {
+        if (!cfg) return;
         setCrosshairConfig({
           forceYellowG: cfg.crosshair.force_yellow_g,
           forceRedG: cfg.crosshair.force_red_g,
@@ -51,7 +44,7 @@ export default function CrosshairRoute() {
       endpoint: "/api/events",
     });
 
-    client.on<OrientationEvent>("orientation", (data) => {
+    client.on("orientation", (data) => {
       crosshairRef.current?.pushSample(data.gx, data.gy);
     });
 

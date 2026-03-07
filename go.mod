@@ -21,3 +21,5 @@ require (
 	golang.org/x/exp v0.0.0-20241204233417-43b7b7cde48d // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
+
+replace github.com/danielgtaylor/huma/v2 => github.com/smazurov/huma/v2 v2.0.0-20260307072812-38500d2eedba

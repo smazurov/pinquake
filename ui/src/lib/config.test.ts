@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
-import type { PinQuakeConfig } from "./api";
+import type { components } from "./api.generated";
+
+type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
 
 function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
   const defaults: PinQuakeConfig = {
-    ble: { device_address: "", device_name: "" },
+    ble: { device_address: "", device_name: "", sensor_name: "" },
     waveform: {
       buffer_size: 256,
       log_knee: 0.02,
@@ -22,7 +24,6 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
     },
     viz: { width: 608, height: 1080 },
     auto_lock: { timeout: 10, epsilon: 0.01 },
-    obs: { host: "localhost", port: 4455, password: "", scene_name: "", source_name: "" },
   };
   return { ...defaults, ...partial };
 }
