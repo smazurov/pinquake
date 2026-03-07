@@ -1,0 +1,50 @@
+name: CI - Go
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/ci-go.yml'
+      - '.golangci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/ci-go.yml'
+      - '.golangci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Lint, Test, Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.10
+          args: --timeout=5m
+
+      - name: Test
+        uses: robherley/go-test-action@v0
+        with:
+          testArguments: -race -cover ./...
+
+      - name: Build
+        run: go build -o /dev/null ./...
