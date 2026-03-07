@@ -51,6 +51,8 @@ type Scanner struct {
 	autoLockEpsilon float32
 	autoLockRef     [3]float32
 	autoLockSince   time.Time
+
+	ready chan struct{} // closed when adapter.Enable() succeeds
 }
 
 func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
@@ -61,11 +63,48 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 		state:           StateIdle,
 		autoLockTimeout: 10 * time.Second,
 		autoLockEpsilon: 0.01,
+		ready:           make(chan struct{}),
 	}
 }
 
 func (s *Scanner) Init() error {
-	return s.adapter.Enable()
+	err := s.adapter.Enable()
+	if err == nil {
+		close(s.ready)
+	}
+	return err
+}
+
+// InitWithRetry enables the BLE adapter, retrying with exponential backoff
+// until it succeeds or stop is closed.
+func (s *Scanner) InitWithRetry(stop chan struct{}) {
+	delay := 2 * time.Second
+	maxDelay := 30 * time.Second
+
+	for {
+		if err := s.adapter.Enable(); err != nil {
+			s.logger.Warn("BLE adapter enable failed, retrying", "error", err, "retry_in", delay)
+			select {
+			case <-stop:
+				s.logger.Info("BLE init retry cancelled")
+				return
+			case <-time.After(delay):
+			}
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+			continue
+		}
+		s.logger.Info("BLE adapter enabled")
+		close(s.ready)
+		return
+	}
+}
+
+// Ready returns a channel that is closed when the adapter is enabled.
+func (s *Scanner) Ready() <-chan struct{} {
+	return s.ready
 }
 
 func (s *Scanner) watchConnection(deviceAddr string) {

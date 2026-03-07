@@ -122,6 +122,12 @@ func (s *Server) AutoConnect() {
 		return
 	}
 	if cfg.BLE.DeviceAddress != "" {
+		// Wait for BLE adapter to be ready before attempting connection.
+		select {
+		case <-s.scanner.Ready():
+		case <-time.After(2 * time.Minute):
+			return
+		}
 		if cfg.BLE.SensorName != "" {
 			if factory := sensors.FactoryByName(cfg.BLE.SensorName); factory != nil {
 				s.scanner.SetSensorFactory(factory)
