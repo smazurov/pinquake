@@ -1,7 +1,13 @@
 package api
 
 import (
+	"context"
+	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/humatest"
 )
 
 func TestDefaultConfigHasValidCrosshairDefaults(t *testing.T) {
@@ -50,6 +56,44 @@ func TestDefaultConfigCrosshairIndependentFromWaveform(t *testing.T) {
 
 	if cfg.Crosshair.ForceYellowG == cfg.Waveform.ForceYellowG {
 		t.Error("Crosshair should have independent ForceYellowG after waveform modification")
+	}
+}
+
+func TestPutConfigAcceptsValidFloats(t *testing.T) {
+	_, api := humatest.New(t)
+	huma.Put(api, "/api/config", func(_ context.Context, input *ConfigRequest) (*ConfigResponse, error) {
+		return &ConfigResponse{Body: input.Body}, nil
+	})
+
+	// 0.36 is a valid multiple of 0.01 but fails huma's multipleOf check
+	// due to IEEE 754 float rounding (0.36 / 0.01 = 35.999...)
+	body := `{
+		"ble": {"device_address": "", "device_name": "", "sensor_name": ""},
+		"waveform": {
+			"buffer_size": 256,
+			"log_knee": 0.02,
+			"force_yellow_g": 0.03,
+			"force_red_g": 0.36,
+			"amp_scale": 1.0,
+			"swap_xy": false
+		},
+		"crosshair": {
+			"force_yellow_g": 0.03,
+			"force_red_g": 0.36,
+			"smoothing": 0.7,
+			"segment_size": 10,
+			"bar_thickness": 12,
+			"swap_xy": false
+		},
+		"viz": {"width": 608, "height": 1080},
+		"auto_lock": {"timeout": 10, "epsilon": 0.01}
+	}`
+
+	resp := api.Put("/api/config", strings.NewReader(body))
+
+	if resp.Code != http.StatusOK {
+		t.Errorf("PUT /api/config with force_red_g=0.36: want 200, got %d\nBody: %s",
+			resp.Code, resp.Body.String())
 	}
 }
 

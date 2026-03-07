@@ -16,6 +16,8 @@ import (
 	"github.com/smazurov/pinquake/ui"
 )
 
+const maxEventLogEntries = 200
+
 type Server struct {
 	api        huma.API
 	mux        *http.ServeMux
@@ -23,6 +25,7 @@ type Server struct {
 	eventBus   *events.Bus
 	scanner    *ble.Scanner
 	configPath string
+	configMu   sync.Mutex
 	eventLogMu sync.Mutex
 	eventLog   []events.LogEntry
 }
@@ -55,6 +58,8 @@ func NewServer(opts *Options) *Server {
 	}
 
 	opts.Scanner.OnConnect(func(sensorName string) {
+		server.configMu.Lock()
+		defer server.configMu.Unlock()
 		cfg, _ := server.loadAppConfig()
 		cfg.BLE.SensorName = sensorName
 		_ = server.saveAppConfig(cfg)
@@ -63,20 +68,12 @@ func NewServer(opts *Options) *Server {
 	opts.EventBus.Subscribe(func(e events.BLEStatusEvent) {
 		switch e.Status {
 		case "connecting":
-			name := e.DeviceName
-			if name == "" {
-				name = e.Device
-			}
-			server.log("info", fmt.Sprintf("Connecting to %s", name))
+			server.log("info", fmt.Sprintf("Connecting to %s", e.DisplayName()))
 		case "connected":
-			name := e.DeviceName
-			if name == "" {
-				name = e.Device
-			}
-			server.log("info", fmt.Sprintf("Connected to %s", name))
+			server.log("info", fmt.Sprintf("Connected to %s", e.DisplayName()))
 		case "idle":
 			if e.Device != "" {
-				server.log("error", fmt.Sprintf("Connection failed: %s", e.Device))
+				server.log("error", fmt.Sprintf("Connection to %s failed", e.DisplayName()))
 			}
 		case "disconnected":
 			msg := "Disconnected"
@@ -88,8 +85,10 @@ func NewServer(opts *Options) *Server {
 	})
 
 	server.registerRoutes()
-	server.syncSwapXY()
-	server.syncAutoLock()
+
+	if cfg, err := server.loadAppConfig(); err == nil {
+		server.syncConfig(cfg)
+	}
 
 	if frontendHandler, err := ui.Handler(); err == nil {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -141,8 +140,23 @@ func (s *Server) log(level, message string) {
 	}
 	s.eventLogMu.Lock()
 	s.eventLog = append(s.eventLog, entry)
+	if len(s.eventLog) > maxEventLogEntries {
+		s.eventLog = s.eventLog[len(s.eventLog)-maxEventLogEntries:]
+	}
 	s.eventLogMu.Unlock()
 	s.eventBus.Publish(entry)
+}
+
+func (s *Server) syncConfig(cfg PinQuakeConfig) {
+	s.scanner.SetSwapXY(cfg.Waveform.SwapXY)
+	s.scanner.SetAutoLockParams(
+		float32(cfg.AutoLock.Epsilon),
+		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),
+	)
+}
+
+func (s *Server) HumaAPI() huma.API {
+	return s.api
 }
 
 func (s *Server) Stop() error {
@@ -153,31 +167,7 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) registerRoutes() {
-	huma.Register(s.api, huma.Operation{
-		OperationID: "health-check",
-		Method:      http.MethodGet,
-		Path:        "/api/health",
-		Summary:     "Health check",
-		Tags:        []string{"health"},
-	}, func(_ context.Context, _ *struct{}) (*HealthResponse, error) {
-		return &HealthResponse{
-			Body: HealthData{
-				Status:  "ok",
-				Message: "PinQuake is running",
-			},
-		}, nil
-	})
-
 	s.registerConfigRoutes()
 	s.registerSSERoutes()
 	s.registerBLERoutes()
-}
-
-type HealthData struct {
-	Status  string `json:"status" example:"ok"`
-	Message string `json:"message" example:"PinQuake is running"`
-}
-
-type HealthResponse struct {
-	Body HealthData
 }

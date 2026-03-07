@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
@@ -28,17 +27,17 @@ type BLEConfig struct {
 
 type WaveformConfig struct {
 	BufferSize   int     `json:"buffer_size" toml:"buffer_size" doc:"Ring buffer sample count" minimum:"32" maximum:"512" default:"256"`
-	LogKnee      float64 `json:"log_knee" toml:"log_knee" doc:"Log compression knee" minimum:"0.001" maximum:"0.1" default:"0.02"`
-	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" default:"0.03"`
-	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" default:"0.1"`
-	AmpScale     float64 `json:"amp_scale" toml:"amp_scale" doc:"Amplitude multiplier" minimum:"0.1" maximum:"5.0" default:"1.0"`
+	LogKnee      float64 `json:"log_knee" toml:"log_knee" doc:"Log compression knee" minimum:"0.001" maximum:"0.1" multipleOf:"0.001" default:"0.02"`
+	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" multipleOf:"0.001" default:"0.03"`
+	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" multipleOf:"0.01" default:"0.1"`
+	AmpScale     float64 `json:"amp_scale" toml:"amp_scale" doc:"Amplitude multiplier" minimum:"0.1" maximum:"5.0" multipleOf:"0.1" default:"1.0"`
 	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
 }
 
 type CrosshairConfig struct {
-	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" default:"0.03"`
-	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" default:"0.1"`
-	Smoothing    float64 `json:"smoothing" toml:"smoothing" doc:"Exponential smoothing factor" minimum:"0" maximum:"1" default:"0.7"`
+	ForceYellowG float64 `json:"force_yellow_g" toml:"force_yellow_g" doc:"Yellow threshold (g)" minimum:"0.001" maximum:"0.5" multipleOf:"0.001" default:"0.03"`
+	ForceRedG    float64 `json:"force_red_g" toml:"force_red_g" doc:"Red threshold (g)" minimum:"0.01" maximum:"1.0" multipleOf:"0.01" default:"0.1"`
+	Smoothing    float64 `json:"smoothing" toml:"smoothing" doc:"Exponential smoothing factor" minimum:"0" maximum:"1" multipleOf:"0.01" default:"0.7"`
 	SegmentSize  int     `json:"segment_size" toml:"segment_size" doc:"Bar segment size (px)" minimum:"2" maximum:"30" default:"10"`
 	BarThickness int     `json:"bar_thickness" toml:"bar_thickness" doc:"Bar thickness (px)" minimum:"4" maximum:"30" default:"12"`
 	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
@@ -46,7 +45,7 @@ type CrosshairConfig struct {
 
 type AutoLockConfig struct {
 	Timeout float64 `json:"timeout" toml:"timeout" doc:"Seconds of stability before auto-lock" minimum:"1" maximum:"60" default:"10"`
-	Epsilon float64 `json:"epsilon" toml:"epsilon" doc:"Max change (g) to count as stable" minimum:"0.001" maximum:"1.0" default:"0.01"`
+	Epsilon float64 `json:"epsilon" toml:"epsilon" doc:"Max change (g) to count as stable" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.01"`
 }
 
 type VizConfig struct {
@@ -91,40 +90,27 @@ func DefaultConfig() PinQuakeConfig {
 }
 
 func (s *Server) registerConfigRoutes() {
-	huma.Register(s.api, huma.Operation{
-		OperationID: "get-config",
-		Method:      http.MethodGet,
-		Path:        "/api/config",
-		Summary:     "Get configuration",
-		Tags:        []string{"config"},
-	}, func(_ context.Context, _ *struct{}) (*ConfigResponse, error) {
+	huma.Get(s.api, "/api/config", func(_ context.Context, _ *struct{}) (*ConfigResponse, error) {
 		cfg, err := s.loadAppConfig()
 		if err != nil {
 			return &ConfigResponse{Body: DefaultConfig()}, nil
 		}
 		return &ConfigResponse{Body: cfg}, nil
-	})
+	}, huma.OperationTags("config"))
 
-	huma.Register(s.api, huma.Operation{
-		OperationID: "update-config",
-		Method:      http.MethodPut,
-		Path:        "/api/config",
-		Summary:     "Update configuration",
-		Tags:        []string{"config"},
-	}, func(_ context.Context, input *ConfigRequest) (*ConfigResponse, error) {
-		if err := s.saveAppConfig(input.Body); err != nil {
+	huma.Put(s.api, "/api/config", func(_ context.Context, input *ConfigRequest) (*ConfigResponse, error) {
+		s.configMu.Lock()
+		err := s.saveAppConfig(input.Body)
+		s.configMu.Unlock()
+		if err != nil {
 			return nil, huma.Error500InternalServerError(fmt.Sprintf("failed to save config: %v", err))
 		}
-		s.scanner.SetSwapXY(input.Body.Waveform.SwapXY)
-		s.scanner.SetAutoLockParams(
-			float32(input.Body.AutoLock.Epsilon),
-			time.Duration(input.Body.AutoLock.Timeout*float64(time.Second)),
-		)
+		s.syncConfig(input.Body)
 		s.eventBus.Publish(events.ConfigChangedEvent{
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
 		return &ConfigResponse{Body: input.Body}, nil
-	})
+	}, huma.OperationTags("config"))
 }
 
 func (s *Server) loadAppConfig() (PinQuakeConfig, error) {
@@ -158,27 +144,7 @@ func (s *Server) loadAppConfig() (PinQuakeConfig, error) {
 	return merged, nil
 }
 
-func (s *Server) syncSwapXY() {
-	cfg, err := s.loadAppConfig()
-	if err != nil {
-		return
-	}
-	s.scanner.SetSwapXY(cfg.Waveform.SwapXY)
-}
-
-func (s *Server) syncAutoLock() {
-	cfg, err := s.loadAppConfig()
-	if err != nil {
-		return
-	}
-	s.scanner.SetAutoLockParams(
-		float32(cfg.AutoLock.Epsilon),
-		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),
-	)
-}
-
 func (s *Server) saveAppConfig(cfg PinQuakeConfig) error {
-	// Read existing file to preserve non-app sections
 	existing := make(map[string]any)
 	if data, err := os.ReadFile(s.configPath); err == nil {
 		_ = toml.Unmarshal(data, &existing)

@@ -35,6 +35,13 @@ type BLEStatusEvent struct {
 
 func (e BLEStatusEvent) Type() uint32 { return TypeBLEStatus }
 
+func (e BLEStatusEvent) DisplayName() string {
+	if e.DeviceName != "" {
+		return e.DeviceName
+	}
+	return e.Device
+}
+
 // BLEScanResultEvent carries a single BLE scan advertisement.
 type BLEScanResultEvent struct {
 	Address    string `json:"address"`
