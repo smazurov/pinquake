@@ -34,12 +34,12 @@ func (s *Scanner) Connect(addr, name string) error {
 	s.deviceName = name
 	s.mu.Unlock()
 
-	s.publishStatus("connecting", addr, "")
+	s.publishStatus("connecting", addr, "", "")
 
 	go func() {
 		if err := s.connectDevice(addr); err != nil {
 			s.logger.Error("Failed to connect", "address", addr, "error", err)
-			s.publishStatus("idle", err.Error(), "")
+			s.publishStatus("idle", err.Error(), "", "")
 			s.mu.Lock()
 			s.state = StateIdle
 			s.deviceName = ""
@@ -110,7 +110,7 @@ func (s *Scanner) connectDevice(addr string) error {
 	go s.watchConnection(addr)
 
 	s.logger.Info("Connected to BLE device", "address", addr, "sensor", sensor.Name())
-	s.publishStatus("connected", addr, "")
+	s.publishStatus("connected", addr, "", sensor.Name())
 
 	s.mu.Lock()
 	cb := s.onConnect
@@ -143,7 +143,7 @@ func (s *Scanner) Disconnect() error {
 	s.disconnecting = false
 	s.mu.Unlock()
 
-	s.publishStatus("disconnected", "", "user")
+	s.publishStatus("disconnected", "", "user", "")
 	s.logger.Info("Disconnected from BLE device")
 	return err
 }

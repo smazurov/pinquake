@@ -1,4 +1,4 @@
-package config
+package data
 
 import (
 	"fmt"
@@ -7,12 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-
 	"github.com/pelletier/go-toml/v2"
 )
 
-// LoadConfig loads configuration with precedence: CLI flags > env vars > config file > defaults.
-func LoadConfig(opts any) error {
+// LoadCLIConfig loads configuration with precedence: env vars > config file > defaults.
+func LoadCLIConfig(opts any) error {
 	v := reflect.ValueOf(opts).Elem()
 	t := v.Type()
 
@@ -70,9 +69,9 @@ func ApplyDefaults(opts any) {
 	}
 }
 
-func getNestedValue(data map[string]any, path string) any {
+func getNestedValue(d map[string]any, path string) any {
 	parts := strings.Split(path, ".")
-	current := data
+	current := d
 	for i, part := range parts {
 		if i == len(parts)-1 {
 			return current[part]

@@ -8,6 +8,8 @@ const (
 	TypeBattery
 	TypeHeartbeat
 	TypeLogEntry
+	TypeVizTrigger
+	TypeDelayedOrientation
 )
 
 type Event interface {
@@ -16,9 +18,9 @@ type Event interface {
 
 // OrientationEvent carries post-processed gravity components.
 type OrientationEvent struct {
-	Gx        float32 `json:"gx"`
-	Gy        float32 `json:"gy"`
-	Gz        float32 `json:"gz"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	G         float32 `json:"g"`
 	Timestamp string  `json:"timestamp"`
 }
 
@@ -30,6 +32,7 @@ type BLEStatusEvent struct {
 	Reason     string `json:"reason,omitempty"`
 	Device     string `json:"device,omitempty"`
 	DeviceName string `json:"device_name,omitempty"`
+	SensorName string `json:"sensor_name,omitempty"`
 	Timestamp  string `json:"timestamp"`
 }
 
@@ -55,6 +58,7 @@ func (e BLEScanResultEvent) Type() uint32 { return TypeBLEScanResult }
 
 // ConfigChangedEvent is published when config is updated.
 type ConfigChangedEvent struct {
+	Section   string `json:"section"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -85,3 +89,22 @@ type LogEntry struct {
 }
 
 func (e LogEntry) Type() uint32 { return TypeLogEntry }
+
+// VizTriggerEvent tells the frontend to show or hide the visualization.
+type VizTriggerEvent struct {
+	Visible   bool   `json:"visible"`
+	Class     string `json:"class"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (e VizTriggerEvent) Type() uint32 { return TypeVizTrigger }
+
+// DelayedOrientationEvent carries time-shifted sensor data for display sync.
+type DelayedOrientationEvent struct {
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	G         float32 `json:"g"`
+	Timestamp string  `json:"timestamp"`
+}
+
+func (e DelayedOrientationEvent) Type() uint32 { return TypeDelayedOrientation }

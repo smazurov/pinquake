@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,8 +12,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/smazurov/pinquake/internal/ble"
+	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 	"github.com/smazurov/pinquake/internal/sensors"
+	"github.com/smazurov/pinquake/internal/viz"
 	"github.com/smazurov/pinquake/ui"
 )
 
@@ -24,6 +27,7 @@ type Server struct {
 	httpServer *http.Server
 	eventBus   *events.Bus
 	scanner    *ble.Scanner
+	trigger    *viz.Trigger
 	configPath string
 	configMu   sync.Mutex
 	eventLogMu sync.Mutex
@@ -49,11 +53,26 @@ func NewServer(opts *Options) *Server {
 	AddCORSHandler(mux, corsConfig)
 	api.UseMiddleware(NewCORSMiddleware(corsConfig))
 
+	appCfg, err := data.LoadFromPath(opts.ConfigPath)
+	if err != nil {
+		if err := data.SaveAll(opts.ConfigPath, appCfg); err != nil {
+			slog.Error("Failed to write default config", "error", err)
+		}
+	}
+
+	trigger := viz.NewTrigger(opts.EventBus, viz.TriggerConfig{
+		DelayMs:  appCfg.Display.DelayMs,
+		TriggerG: appCfg.Display.TriggerG,
+		FadeS:    float64(appCfg.Display.FadeS),
+	})
+	trigger.Start()
+
 	server := &Server{
 		api:        api,
 		mux:        mux,
 		eventBus:   opts.EventBus,
 		scanner:    opts.Scanner,
+		trigger:    trigger,
 		configPath: opts.ConfigPath,
 	}
 
@@ -62,7 +81,27 @@ func NewServer(opts *Options) *Server {
 		defer server.configMu.Unlock()
 		cfg, _ := server.loadAppConfig()
 		cfg.BLE.SensorName = sensorName
-		_ = server.saveAppConfig(cfg)
+		if err := data.SaveAll(server.configPath, cfg); err != nil {
+			slog.Error("Failed to save BLE sensor name", "error", err)
+		}
+
+		entry := sensors.FactoryByName(sensorName)
+		if entry != nil && entry.NewConfig != nil {
+			sensorCfg := server.loadSensorConfig(*entry)
+			if err := server.scanner.ApplySensorConfig(*entry, sensorCfg); err != nil {
+				server.log("error", fmt.Sprintf("Failed to apply %s config: %v", sensorName, err))
+			} else {
+				server.log("info", fmt.Sprintf("Applied %s sensor config", sensorName))
+			}
+		}
+	})
+
+	opts.EventBus.Subscribe(func(e events.VizTriggerEvent) {
+		if e.Visible {
+			server.log("info", "Viz triggered")
+		} else {
+			server.log("info", "Viz hidden")
+		}
 	})
 
 	opts.EventBus.Subscribe(func(e events.BLEStatusEvent) {
@@ -86,9 +125,7 @@ func NewServer(opts *Options) *Server {
 
 	server.registerRoutes()
 
-	if cfg, err := server.loadAppConfig(); err == nil {
-		server.syncConfig(cfg)
-	}
+	server.syncConfig(appCfg)
 
 	if frontendHandler, err := ui.Handler(); err == nil {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -147,21 +184,27 @@ func (s *Server) log(level, message string) {
 	s.eventBus.Publish(entry)
 }
 
-func (s *Server) syncConfig(cfg PinQuakeConfig) {
+func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
 	s.scanner.SetSwapXY(cfg.Waveform.SwapXY)
 	s.scanner.SetAutoLockParams(
 		float32(cfg.AutoLock.Epsilon),
 		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),
 	)
+	s.trigger.SetConfig(viz.TriggerConfig{
+		DelayMs:  cfg.Display.DelayMs,
+		TriggerG: cfg.Display.TriggerG,
+		FadeS:    float64(cfg.Display.FadeS),
+	})
 }
 
 func (s *Server) HumaAPI() huma.API {
 	return s.api
 }
 
-func (s *Server) Stop() error {
+func (s *Server) Stop(ctx context.Context) error {
+	s.trigger.Stop()
 	if s.httpServer != nil {
-		return s.httpServer.Shutdown(context.Background())
+		return s.httpServer.Shutdown(ctx)
 	}
 	return nil
 }

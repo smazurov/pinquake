@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
+	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 )
 
@@ -116,5 +118,7 @@ func (s *Server) updateBLEDevice(addr, name string) {
 	if addr == "" {
 		cfg.BLE.SensorName = ""
 	}
-	_ = s.saveAppConfig(cfg)
+	if err := data.SaveAll(s.configPath, cfg); err != nil {
+		slog.Error("Failed to save BLE device config", "error", err)
+	}
 }

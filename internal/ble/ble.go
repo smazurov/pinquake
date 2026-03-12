@@ -37,7 +37,10 @@ type Scanner struct {
 	scanDone      chan struct{}
 	connCtx       context.Context
 	connCancel    context.CancelFunc
-	refFrame      *orientation.Orientation
+	refFrame    *orientation.Orientation
+	refRotation orientation.Mat3
+	gravity     [3]float32
+	gMag        float32
 	pendingLock   bool
 	swapXY        bool
 	disconnecting bool
@@ -48,9 +51,11 @@ type Scanner struct {
 	autoLockEpsilon float32
 	autoLockRef     [3]float32
 	autoLockSince   time.Time
+	lastRaw         *orientation.Orientation
 
 	ready chan struct{} // closed when adapter.Enable() succeeds
 }
+
 
 func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 	return &Scanner{
@@ -141,6 +146,8 @@ func (s *Scanner) UnlockFrame() {
 func (s *Scanner) resetAutoLock() {
 	s.autoLockEnabled = false
 	s.refFrame = nil
+	s.gMag = 0
+	s.gravity = [3]float32{}
 	s.pendingLock = false
 	s.autoLockSince = time.Time{}
 }
@@ -170,7 +177,16 @@ func (s *Scanner) SetSwapXY(swap bool) {
 	s.swapXY = swap
 }
 
-func (s *Scanner) publishStatus(status, device, reason string) {
+func (s *Scanner) GetSensorName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sensor != nil {
+		return s.sensor.Name()
+	}
+	return ""
+}
+
+func (s *Scanner) publishStatus(status, device, reason, sensorName string) {
 	s.mu.Lock()
 	name := s.deviceName
 	s.mu.Unlock()
@@ -179,8 +195,25 @@ func (s *Scanner) publishStatus(status, device, reason string) {
 		Reason:     reason,
 		Device:     device,
 		DeviceName: name,
+		SensorName: sensorName,
 		Timestamp:  time.Now().Format(time.RFC3339Nano),
 	})
+}
+
+func (s *Scanner) ApplySensorConfig(entry sensors.SensorEntry, cfg any) error {
+	s.mu.Lock()
+	sensor := s.sensor
+	s.mu.Unlock()
+	if sensor == nil {
+		return nil
+	}
+	if entry.ApplyConfig == nil {
+		return nil
+	}
+	if sensor.Name() != entry.Name {
+		return nil
+	}
+	return entry.ApplyConfig(sensor, cfg)
 }
 
 func errState(action string, state State) error {

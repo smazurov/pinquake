@@ -19,21 +19,23 @@ func (s *Server) registerSSERoutes() {
 		Description: "Real-time orientation data and BLE status events",
 		Tags:        []string{"events"},
 	}, map[string]any{
-		"orientation":    events.OrientationEvent{},
+		"orientation":    events.DelayedOrientationEvent{},
 		"ble-status":     events.BLEStatusEvent{},
 		"config-changed": events.ConfigChangedEvent{},
 		"battery":        events.BatteryEvent{},
 		"heartbeat":      events.HeartbeatEvent{},
 		"log":            events.LogEntry{},
+		"viz-trigger":    events.VizTriggerEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
 		eventCh := make(chan any, 64)
 
 		unsubscribers := []func(){
-			events.SubscribeToChannel[events.OrientationEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.DelayedOrientationEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.BLEStatusEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.ConfigChangedEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.BatteryEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.LogEntry](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.VizTriggerEvent](s.eventBus, eventCh),
 		}
 		defer func() {
 			for _, unsub := range unsubscribers {
@@ -41,9 +43,18 @@ func (s *Server) registerSSERoutes() {
 			}
 		}()
 
+		if err := send.Data(events.VizTriggerEvent{
+			Visible:   s.trigger.IsVisible(),
+			Class:     "impact",
+			Timestamp: time.Now().Format(time.RFC3339Nano),
+		}); err != nil {
+			return
+		}
+
 		if err := send.Data(events.BLEStatusEvent{
 			Status:     string(s.scanner.GetState()),
 			DeviceName: s.scanner.GetDeviceName(),
+			SensorName: s.scanner.GetSensorName(),
 			Timestamp:  time.Now().Format(time.RFC3339Nano),
 		}); err != nil {
 			return

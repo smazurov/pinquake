@@ -23,7 +23,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	done := s.scanDone
 	s.mu.Unlock()
 
-	s.publishStatus("scanning", "", "")
+	s.publishStatus("scanning", "", "", "")
 
 	go func() {
 		defer func() {
@@ -35,7 +35,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 			s.scanCancel = nil
 			s.scanDone = nil
 			s.mu.Unlock()
-			s.publishStatus("idle", "", "")
+			s.publishStatus("idle", "", "", "")
 			close(done)
 		}()
 

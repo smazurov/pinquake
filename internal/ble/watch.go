@@ -74,7 +74,7 @@ func (s *Scanner) watchConnection(deviceAddr string) {
 			s.resetConnectionState()
 			s.mu.Unlock()
 
-			s.publishStatus("disconnected", "", "lost")
+			s.publishStatus("disconnected", "", "lost", "")
 			return
 		}
 	}

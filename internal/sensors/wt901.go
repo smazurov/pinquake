@@ -121,6 +121,25 @@ func (w *WT901) Calibrate() error { return ErrUnsupported }
 
 func (w *WT901) Close() {}
 
+func (w *WT901) writeRegister(addr, lo, hi byte) error {
+	cmd := []byte{0xFF, 0xAA, addr, lo, hi}
+	_, err := w.writeChar.WriteWithoutResponse(cmd)
+	if err != nil {
+		return fmt.Errorf("write register 0x%02X: %w", addr, err)
+	}
+	return nil
+}
+
+func (w *WT901) save() error {
+	cmd := []byte{0xFF, 0xAA, 0x00, 0x00, 0x00}
+	_, err := w.writeChar.WriteWithoutResponse(cmd)
+	if err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
 // ReadBatteryBlock reads registers 0x5C-0x6B for debug purposes.
 func (w *WT901) ReadBatteryBlock() (map[string]uint16, error) {
 	if err := w.unlock(); err != nil {

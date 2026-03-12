@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,7 +14,7 @@ import (
 
 	"github.com/smazurov/pinquake/internal/api"
 	"github.com/smazurov/pinquake/internal/ble"
-	"github.com/smazurov/pinquake/internal/config"
+	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 )
 
@@ -27,9 +28,9 @@ func main() {
 	flag.Parse()
 
 	opts := &Options{}
-	config.ApplyDefaults(opts)
+	data.ApplyDefaults(opts)
 
-	if err := config.LoadConfig(opts); err != nil {
+	if err := data.LoadCLIConfig(opts); err != nil {
 		slog.Warn("Failed to load config", "error", err)
 	}
 
@@ -59,15 +60,29 @@ func main() {
 		return
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	go server.AutoConnect()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
-		<-sigCh
-		logger.Info("Shutting down")
-		close(bleStop)
+		logger.Info("Starting PinQuake", "port", opts.Port)
+		if err := server.Start(opts.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	logger.Info("Shutting down")
+	close(bleStop)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 		if scanner.GetState() == ble.StateConnected {
 			scanner.Disconnect()
 		}
@@ -76,15 +91,14 @@ func main() {
 			Reason:    "shutdown",
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
-		if err := server.Stop(); err != nil {
+		if err := server.Stop(shutdownCtx); err != nil {
 			logger.Error("Error stopping server", "error", err)
 		}
-		os.Exit(0)
 	}()
 
-	logger.Info("Starting PinQuake", "port", opts.Port)
-	if err := server.Start(opts.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+	select {
+	case <-done:
+	case <-shutdownCtx.Done():
+		logger.Warn("Shutdown timed out, forcing exit")
 	}
 }
