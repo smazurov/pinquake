@@ -5,7 +5,7 @@ tmp_dir = "tmp"
 [build]
   args_bin = []
   bin = "./tmp/main"
-  cmd = "go build -tags ui_embed -o ./tmp/main . && ./tmp/main -openapi > openapi.json && cd ui && npx openapi-typescript ../openapi.json -o src/lib/api.generated.ts"
+  cmd = "go build -tags ui_embed -o ./tmp/main . && cd ui && pnpm gen:api"
   delay = 1000
   exclude_dir = ["assets", "tmp", "vendor", "testdata", "ui"]
   exclude_file = ["config.toml"]

@@ -3,4 +3,3 @@ tmp/
 ui/dist/
 ui/node_modules/
 openapi.json
-ui/src/lib/api.generated.ts

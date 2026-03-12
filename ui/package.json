@@ -15,7 +15,7 @@
     "lint:fix": "eslint './src/**/*.{ts,tsx}' --fix",
     "preview": "vite preview",
     "test": "vitest run",
-    "gen:api": "openapi-typescript ../openapi.json -o src/lib/api.generated.ts"
+    "gen:api": "go run -tags ui_embed .. -openapi | openapi-typescript /dev/stdin -o src/lib/api.generated.ts"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

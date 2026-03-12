@@ -327,17 +327,14 @@ func TestInReferenceFrame_VerticalMount(t *testing.T) {
 
 func TestInReferenceFrame_GravityUpdated(t *testing.T) {
 	// Lock at vertical mount: gravity on +X
-	ref := &Orientation{Ax: 1, Ay: 0, Az: 0}
-	rot := BuildLockRotation(ref)
-
-	// Gravity has drifted 10° toward +Z
+	// Gravity has drifted 10° toward +Z from vertical mount
 	shiftAngle := 10.0 * deg2rad
 	shiftAx := float32(math.Cos(shiftAngle))
 	shiftAz := float32(math.Sin(shiftAngle))
 	gravity := [3]float32{shiftAx, 0, shiftAz}
 
-	// Rebuild rotation from updated gravity
-	rot = BuildLockRotation(&Orientation{Ax: shiftAx, Ay: 0, Az: shiftAz})
+	// Build rotation from updated gravity
+	rot := BuildLockRotation(&Orientation{Ax: shiftAx, Ay: 0, Az: shiftAz})
 
 	// Reading matches shifted gravity → output should be zero
 	cur := &Orientation{Ax: shiftAx, Ay: 0, Az: shiftAz}
