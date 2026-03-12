@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/danielgtaylor/huma/v2 v2.37.2
 	github.com/godbus/dbus/v5 v5.1.0
+	github.com/jonboulle/clockwork v0.5.0
 	github.com/kelindar/event v1.5.2
 	github.com/pelletier/go-toml/v2 v2.2.4
 	tinygo.org/x/bluetooth v0.14.0

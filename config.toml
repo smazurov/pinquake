@@ -1,32 +1,45 @@
 [app]
+[app.auto_lock]
+epsilon = 0.01
+timeout = 10.0
+
 [app.ble]
 device_address = 'EA:F0:F1:BC:59:DD'
 device_name = 'WT901BLE68'
 sensor_name = 'WT901'
 
-[app.waveform]
-buffer_size = 256
-log_knee = 0.02
-force_yellow_g = 0.03
-force_red_g = 0.1
-amp_scale = 1.7
-swap_xy = false
-
 [app.crosshair]
-force_yellow_g = 0.196
-force_red_g = 0.36
-smoothing = 0.64
-segment_size = 9
-bar_thickness = 10
-swap_xy = true
-
-[app.viz]
+enabled = true
 width = 200
 height = 200
+force_yellow_g = 0.03
+force_red_g = 0.1
+decay_s = 0.75
+segment_size = 10
+bar_thickness = 12
+swap_xy = false
+hide_neg_y = false
 
-[app.auto_lock]
-timeout = 10.0
-epsilon = 0.01
+[app.display]
+delay_ms = 10
+fade_s = -1.0
+trigger_g = 0.105
 
-[server]
-port = ':8091'
+[app.sensor]
+[app.sensor.WT901]
+accel_filter = 2
+accel_range_g = 4
+bandwidth_hz = 44
+output_rate_hz = 200
+six_axis = true
+
+[app.waveform]
+amp_scale = 1.0
+buffer_size = 256
+enabled = true
+force_red_g = 0.1
+force_yellow_g = 0.03
+height = 1080
+log_knee = 0.02
+swap_xy = false
+width = 608
