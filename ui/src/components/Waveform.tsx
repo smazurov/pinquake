@@ -25,7 +25,7 @@ const DEFAULT_CONFIG: WaveformConfig = {
 };
 
 export interface WaveformHandle {
-  pushSample: (gx: number, gy: number) => void;
+  pushSample: (x: number, y: number) => void;
 }
 
 interface WaveformProps {
@@ -39,8 +39,8 @@ const Waveform = forwardRef<WaveformHandle, WaveformProps>(function Waveform(
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gxBufferRef = useRef<Float32Array>(new Float32Array(MAX_BUFFER));
-  const gyBufferRef = useRef<Float32Array>(new Float32Array(MAX_BUFFER));
+  const xBufferRef = useRef<Float32Array>(new Float32Array(MAX_BUFFER));
+  const yBufferRef = useRef<Float32Array>(new Float32Array(MAX_BUFFER));
   const headRef = useRef(0);
   const lenRef = useRef(0);
   const rafRef = useRef<number>(0);
@@ -48,10 +48,10 @@ const Waveform = forwardRef<WaveformHandle, WaveformProps>(function Waveform(
   const configRef = useRef<WaveformConfig>(DEFAULT_CONFIG);
   useEffect(() => { configRef.current = { ...DEFAULT_CONFIG, ...configOverride }; }, [configOverride]);
 
-  const pushSample = useCallback((gx: number, gy: number) => {
+  const pushSample = useCallback((x: number, y: number) => {
     const head = headRef.current;
-    gxBufferRef.current[head] = gx;
-    gyBufferRef.current[head] = gy;
+    xBufferRef.current[head] = x;
+    yBufferRef.current[head] = y;
     headRef.current = (head + 1) % MAX_BUFFER;
     if (lenRef.current < MAX_BUFFER) {
       lenRef.current++;
@@ -73,8 +73,8 @@ const Waveform = forwardRef<WaveformHandle, WaveformProps>(function Waveform(
     if (len < 2) return;
 
     const head = headRef.current;
-    const gxBuf = gxBufferRef.current;
-    const gyBuf = gyBufferRef.current;
+    const xBuf = xBufferRef.current;
+    const yBuf = yBufferRef.current;
     const config = configRef.current;
 
     const yConfig: WaveformConfig = {
@@ -87,13 +87,13 @@ const Waveform = forwardRef<WaveformHandle, WaveformProps>(function Waveform(
     const yLen = height - 2 * MARGIN;
 
     // X trace: right half (original)
-    drawTrace(ctx, gxBuf, head, len, width / 2, height - MARGIN, 1, 0, 0, -1, xLen, config);
+    drawTrace(ctx, xBuf, head, len, width / 2, height - MARGIN, 1, 0, 0, -1, xLen, config);
     // X trace: left half (mirror)
-    drawTrace(ctx, gxBuf, head, len, width / 2, height - MARGIN, -1, 0, 0, -1, xLen, config);
+    drawTrace(ctx, xBuf, head, len, width / 2, height - MARGIN, -1, 0, 0, -1, xLen, config);
     // Y trace: right edge (original)
-    drawTrace(ctx, gyBuf, head, len, width - MARGIN, height - MARGIN, 0, -1, -1, 0, yLen, yConfig);
+    drawTrace(ctx, yBuf, head, len, width - MARGIN, height - MARGIN, 0, -1, -1, 0, yLen, yConfig);
     // Y trace: left edge (mirror)
-    drawTrace(ctx, gyBuf, head, len, MARGIN, height - MARGIN, 0, -1, 1, 0, yLen, yConfig);
+    drawTrace(ctx, yBuf, head, len, MARGIN, height - MARGIN, 0, -1, 1, 0, yLen, yConfig);
   }, [width, height]);
 
   useEffect(() => {

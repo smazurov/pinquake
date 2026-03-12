@@ -1,41 +1,59 @@
 import { useEffect, useRef, useCallback, useState } from "react";
+import { useBeforeUnload } from "react-router-dom";
 import Crosshair from "../components/Crosshair";
 import type { CrosshairHandle, CrosshairConfig } from "../components/Crosshair";
 import { SSEClient, api } from "../lib/api";
 
-const DEFAULT_WIDTH = 608;
-const DEFAULT_HEIGHT = 1080;
+const DEFAULT_WIDTH = 200;
+const DEFAULT_HEIGHT = 200;
 
-function getCanvasDimensions(): { width: number; height: number } {
+function getQueryDimensions(): { width: number | null; height: number | null } {
   const params = new URLSearchParams(window.location.search);
   const w = params.get("width");
   const h = params.get("height");
   return {
-    width: w ? Number(w) : DEFAULT_WIDTH,
-    height: h ? Number(h) : DEFAULT_HEIGHT,
+    width: w ? Number(w) : null,
+    height: h ? Number(h) : null,
   };
 }
 
 export default function CrosshairRoute() {
   const crosshairRef = useRef<CrosshairHandle>(null);
-  const { width, height } = getCanvasDimensions();
+  const sseRef = useRef<SSEClient<"/api/events"> | null>(null);
+  const [dimensions, setDimensions] = useState(() => {
+    const q = getQueryDimensions();
+    return { width: q.width ?? DEFAULT_WIDTH, height: q.height ?? DEFAULT_HEIGHT };
+  });
+  const [enabled, setEnabled] = useState(true);
+  const [visible, setVisible] = useState(false);
   const [crosshairConfig, setCrosshairConfig] = useState<CrosshairConfig | undefined>();
 
   const fetchConfig = useCallback(() => {
-    api.GET("/api/config")
+    api.GET("/api/config/crosshair")
       .then(({ data: cfg }) => {
         if (!cfg) return;
+        setEnabled(cfg.enabled);
+        const q = getQueryDimensions();
+        setDimensions({
+          width: q.width ?? cfg.width,
+          height: q.height ?? cfg.height,
+        });
         setCrosshairConfig({
-          forceYellowG: cfg.crosshair.force_yellow_g,
-          forceRedG: cfg.crosshair.force_red_g,
-          smoothing: cfg.crosshair.smoothing,
-          segmentSize: cfg.crosshair.segment_size,
-          barThickness: cfg.crosshair.bar_thickness,
-          swapXY: cfg.crosshair.swap_xy,
+          forceYellowG: cfg.force_yellow_g,
+          forceRedG: cfg.force_red_g,
+          decayS: cfg.decay_s,
+          segmentSize: cfg.segment_size,
+          barThickness: cfg.bar_thickness,
+          swapXY: cfg.swap_xy,
+          hideNegY: cfg.hide_neg_y,
         });
       })
       .catch(() => {});
   }, []);
+
+  useBeforeUnload(useCallback(() => {
+    sseRef.current?.disconnect();
+  }, []));
 
   useEffect(() => {
     fetchConfig();
@@ -43,30 +61,43 @@ export default function CrosshairRoute() {
     const client = new SSEClient({
       endpoint: "/api/events",
     });
+    sseRef.current = client;
 
     client.on("orientation", (data) => {
-      crosshairRef.current?.pushSample(data.gx, data.gy);
+      crosshairRef.current?.pushSample(data.x, data.y);
     });
 
-    client.on("config-changed", () => {
-      fetchConfig();
+    client.on("viz-trigger", (data) => {
+      setVisible(data.visible);
+    });
+
+    client.on("config-changed", (data) => {
+      if (data.section === "crosshair") fetchConfig();
     });
 
     client.connect();
 
-    return () => client.disconnect();
+    return () => {
+      client.disconnect();
+      sseRef.current = null;
+    };
   }, [fetchConfig]);
+
+  if (!enabled) {
+    return <div style={{ background: "transparent" }} />;
+  }
 
   return (
     <div
       style={{
-        width,
-        height,
+        width: dimensions.width,
+        height: dimensions.height,
         background: "transparent",
         overflow: "hidden",
+        display: visible ? "block" : "none",
       }}
     >
-      <Crosshair ref={crosshairRef} width={width} height={height} config={crosshairConfig} />
+      <Crosshair ref={crosshairRef} width={dimensions.width} height={dimensions.height} config={crosshairConfig} />
     </div>
   );
 }

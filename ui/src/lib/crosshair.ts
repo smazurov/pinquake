@@ -3,19 +3,21 @@ import { scaleLinear } from "d3-scale";
 export interface CrosshairDisplayConfig {
   forceYellowG: number;
   forceRedG: number;
-  smoothing: number;
+  decayS: number;
   segmentSize: number;
   barThickness: number;
   swapXY: boolean;
+  hideNegY: boolean;
 }
 
 export const DEFAULT_CROSSHAIR_CONFIG: CrosshairDisplayConfig = {
   forceYellowG: 0.03,
   forceRedG: 0.1,
-  smoothing: 0.7,
+  decayS: 0.3,
   segmentSize: 10,
   barThickness: 12,
   swapXY: false,
+  hideNegY: false,
 };
 
 export function computeColorScale(
@@ -48,6 +50,9 @@ export function computeArmFill(
   return scale(magnitude) as number;
 }
 
-export function smoothValue(display: number, target: number, smoothing: number): number {
-  return display * smoothing + target * (1 - smoothing);
+export function decayValue(display: number, target: number, decayS: number): number {
+  if (target >= display) return target;
+  if (decayS === 0) return target;
+  const alpha = Math.exp(-3 / (decayS * 60));
+  return display * alpha + target * (1 - alpha);
 }

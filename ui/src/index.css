@@ -1,4 +1,9 @@
 @import "tailwindcss";
+
+@keyframes dot-flash {
+  0% { opacity: 1; transform: scale(1.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
 @custom-variant dark (&:is(.dark, .dark *));
 
 input[type="number"]::-webkit-inner-spin-button,

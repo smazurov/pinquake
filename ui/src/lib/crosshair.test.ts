@@ -3,7 +3,7 @@ import {
   computeColorScale,
   computeSegmentCount,
   computeArmFill,
-  smoothValue,
+  decayValue,
 } from "./crosshair";
 
 describe("computeColorScale", () => {
@@ -57,16 +57,18 @@ describe("computeArmFill", () => {
   });
 });
 
-describe("smoothValue", () => {
-  it("returns target when smoothing is 0", () => {
-    expect(smoothValue(5, 10, 0)).toBe(10);
+describe("decayValue", () => {
+  it("returns target on rising edge", () => {
+    expect(decayValue(5, 10, 0.5)).toBe(10);
   });
 
-  it("returns display when smoothing is 1", () => {
-    expect(smoothValue(5, 10, 1)).toBe(5);
+  it("returns target when decayS is 0", () => {
+    expect(decayValue(10, 5, 0)).toBe(5);
   });
 
-  it("blends proportionally", () => {
-    expect(smoothValue(0, 1, 0.7)).toBeCloseTo(0.3);
+  it("decays toward target when falling", () => {
+    const result = decayValue(10, 0, 0.5);
+    expect(result).toBeGreaterThan(0);
+    expect(result).toBeLessThan(10);
   });
 });

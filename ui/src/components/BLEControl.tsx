@@ -20,9 +20,14 @@ function statusColor(state: BLEState, scanning: boolean, reason: string | null):
   return "bg-red-400";
 }
 
-function StatusDot({ state, scanning, reason }: Readonly<{ state: BLEState; scanning: boolean; reason: string | null }>) {
+function StatusDot({ state, scanning, reason, flashKey }: Readonly<{ state: BLEState; scanning: boolean; reason: string | null; flashKey?: number }>) {
   const color = statusColor(state, scanning, reason);
-  return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
+  return (
+    <span
+      key={flashKey}
+      className={`inline-block h-2 w-2 rounded-full ${color} ${flashKey ? "animate-[dot-flash_0.4s_ease-out]" : ""}`}
+    />
+  );
 }
 
 function formatStateLabel(state: BLEState, scanning: boolean, disconnecting: boolean, reason: string | null): string {
@@ -54,7 +59,7 @@ function formatTime(timestamp: string): string {
   return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
-export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void }>) {
+export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void; onSensorChange?: (sensorName: string | null) => void }>) {
   const [bleState, setBleState] = useState<BLEState>("idle");
   const [scanResults, setScanResults] = useState<Map<string, BLEScanResult>>(
     new Map(),
@@ -72,6 +77,8 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
   const scanSSE = useRef<SSEClient<"/api/ble/scan"> | null>(null);
   const onSSEStatusRef = useRef(onSSEStatus);
   useEffect(() => { onSSEStatusRef.current = onSSEStatus; }, [onSSEStatus]);
+  const onSensorChangeRef = useRef(onSensorChange);
+  useEffect(() => { onSensorChangeRef.current = onSensorChange; }, [onSensorChange]);
   useEffect(() => {
     const client = new SSEClient({
       endpoint: "/api/events",
@@ -94,12 +101,14 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
         setFrameLocked(false);
         setDeviceName(null);
         setBattery(null);
+        onSensorChangeRef.current?.(null);
       }
       if (data.status === "connected" || data.status === "connecting") {
         setDeviceName(data.device_name ?? null);
         setScanResults(new Map());
       }
       if (data.status === "connected") {
+        onSensorChangeRef.current?.(data.sensor_name ?? null);
         void api.GET("/api/ble/frame").then(({ data }) => { if (data) setFrameLocked(data.locked); });
       }
     });
@@ -185,13 +194,41 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
     }
   }, []);
 
-  const sortedResults = useMemo(() =>
-    [...scanResults.values()].sort((a, b) => {
+  const hoveringRef = useRef(false);
+  const [sortFlash, setSortFlash] = useState(0);
+  const [sortOrder, setSortOrder] = useState<string[]>([]);
+  const scanResultsRef = useRef(scanResults);
+  useEffect(() => {
+    scanResultsRef.current = scanResults;
+  }, [scanResults]);
+
+  const recomputeOrder = useCallback(() => {
+    const sorted = [...scanResultsRef.current.values()].sort((a, b) => {
       const aKnown = a.sensor_name ? 1 : 0;
       const bKnown = b.sensor_name ? 1 : 0;
       if (aKnown !== bKnown) return bKnown - aKnown;
       return b.rssi - a.rssi;
-    }), [scanResults]);
+    });
+    setSortOrder(sorted.map((d) => d.address));
+    setSortFlash((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    recomputeOrder();
+    const id = setInterval(() => {
+      if (!hoveringRef.current) recomputeOrder();
+    }, 1000);
+    return () => clearInterval(id);
+  }, [scanning, recomputeOrder]);
+
+  const sortedResults = useMemo(() => {
+    const orderMap = new Map(sortOrder.map((addr, i) => [addr, i]));
+    return [...scanResults.values()].sort((a, b) => {
+      const ai = orderMap.get(a.address) ?? Infinity;
+      const bi = orderMap.get(b.address) ?? Infinity;
+      return ai - bi;
+    });
+  }, [scanResults, sortOrder]);
 
   const reversedLog = useMemo(() => [...logEntries].reverse(), [logEntries]);
 
@@ -204,7 +241,7 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
   const headerContent = (
     <div className="flex items-center justify-between w-full">
       <div className="flex items-center gap-2">
-        <StatusDot state={bleState} scanning={scanning} reason={disconnectReason} />
+        <StatusDot state={bleState} scanning={scanning} reason={disconnectReason} flashKey={scanning ? sortFlash : undefined} />
         {isConnected && deviceName ? (
           <span className="flex items-center gap-2">
             <span className="text-xs text-slate-300 truncate max-w-[140px]">
@@ -280,7 +317,7 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
   );
 
   return (
-    <Collapsible id="ble" header={headerContent} defaultOpen={true}>
+    <Collapsible id="ble" header={headerContent} defaultOpen={true} forceOpen={scanning}>
       {error && (
         <div className="mb-3">
           <ErrorAlert message={error} />
@@ -288,7 +325,11 @@ export default function BLEControl({ onSSEStatus }: Readonly<{ onSSEStatus?: (st
       )}
 
       {sortedResults.length > 0 && !isConnected && (
-        <div className="max-h-[280px] overflow-y-auto space-y-1">
+        <div
+          className="max-h-[280px] overflow-y-auto space-y-1"
+          onMouseEnter={() => { hoveringRef.current = true; }}
+          onMouseLeave={() => { hoveringRef.current = false; }}
+        >
           {sortedResults.slice(0, 10).map((device) => (
             <button
               key={device.address}

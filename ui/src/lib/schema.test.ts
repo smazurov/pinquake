@@ -1,16 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { extractFieldMeta, extractAllFieldMeta, extractSectionSchema } from "./schema";
+import { extractFieldMeta, extractAllFieldMeta, extractSectionSchema, type JSONSchemaObject } from "./schema";
 
 describe("extractFieldMeta", () => {
   const schema = {
     properties: {
-      smoothing: {
+      decay_s: {
         type: "number",
-        description: "Exponential smoothing factor",
+        description: "Decay time (s)",
         minimum: 0,
-        maximum: 1,
-        multipleOf: 0.05,
-        default: 0.7,
+        maximum: 2,
+        multipleOf: 0.01,
+        default: 0.3,
       },
       buffer_size: {
         type: "integer",
@@ -33,15 +33,15 @@ describe("extractFieldMeta", () => {
   };
 
   it("extracts slider field when min+max+step present", () => {
-    const meta = extractFieldMeta(schema, "smoothing");
+    const meta = extractFieldMeta(schema, "decay_s");
     expect(meta).toEqual({
-      key: "smoothing",
+      key: "decay_s",
       type: "slider",
-      description: "Exponential smoothing factor",
+      description: "Decay time (s)",
       min: 0,
-      max: 1,
-      step: 0.05,
-      default: 0.7,
+      max: 2,
+      step: 0.01,
+      default: 0.3,
     });
   });
 
@@ -81,8 +81,83 @@ describe("extractFieldMeta", () => {
     });
   });
 
+  it("extracts select field for integer with enum", () => {
+    const enumSchema: JSONSchemaObject = {
+      properties: {
+        output_rate_hz: {
+          type: "integer",
+          description: "Output rate (Hz)",
+          enum: [10, 20, 50, 100, 200],
+          default: 50,
+        },
+      },
+    };
+    const meta = extractFieldMeta(enumSchema, "output_rate_hz");
+    expect(meta).toEqual({
+      key: "output_rate_hz",
+      type: "select",
+      description: "Output rate (Hz)",
+      default: 50,
+      options: [10, 20, 50, 100, 200],
+    });
+  });
+
   it("returns null for unknown key", () => {
     expect(extractFieldMeta(schema, "nope")).toBeNull();
+  });
+
+  const alwaysVisible = "Always visible";
+
+  it("extracts oneOf with const sentinel and range", () => {
+    const oneOfSchema: JSONSchemaObject = {
+      properties: {
+        fade_s: {
+          description: "Visible duration after trigger (s)",
+          default: 5,
+          oneOf: [
+            { const: -1, description: alwaysVisible },
+            { type: "number", minimum: 1, maximum: 30, multipleOf: 0.1 },
+          ],
+        },
+      },
+    };
+    const meta = extractFieldMeta(oneOfSchema, "fade_s");
+    expect(meta).toEqual({
+      key: "fade_s",
+      type: "slider",
+      description: "Visible duration after trigger (s)",
+      min: 1,
+      max: 30,
+      step: 0.1,
+      default: 5,
+      sentinel: { value: -1, label: alwaysVisible },
+    });
+  });
+
+  it("extracts oneOf with enum sentinel and range", () => {
+    const oneOfSchema: JSONSchemaObject = {
+      properties: {
+        fade_s: {
+          description: "Fade duration",
+          default: 5,
+          oneOf: [
+            { type: "number", description: alwaysVisible, enum: [-1] },
+            { type: "number", minimum: 1, maximum: 30, multipleOf: 0.1 },
+          ],
+        },
+      },
+    };
+    const meta = extractFieldMeta(oneOfSchema, "fade_s");
+    expect(meta).toEqual({
+      key: "fade_s",
+      type: "slider",
+      description: "Fade duration",
+      min: 1,
+      max: 30,
+      step: 0.1,
+      default: 5,
+      sentinel: { value: -1, label: alwaysVisible },
+    });
   });
 });
 
@@ -120,7 +195,7 @@ describe("extractSectionSchema", () => {
         },
         CrosshairConfig: {
           properties: {
-            smoothing: { type: "number", minimum: 0, maximum: 1, multipleOf: 0.05 },
+            decay_s: { type: "number", minimum: 0, maximum: 2, multipleOf: 0.01 },
           },
         },
       },
@@ -134,7 +209,7 @@ describe("extractSectionSchema", () => {
 
   it("falls back to type name lookup", () => {
     const section = extractSectionSchema(openAPI, "crosshair");
-    expect(section?.properties).toHaveProperty("smoothing");
+    expect(section?.properties).toHaveProperty("decay_s");
   });
 
   it("returns null for unknown section", () => {

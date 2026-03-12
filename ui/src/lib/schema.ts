@@ -1,23 +1,33 @@
+export interface SentinelMeta {
+  value: number;
+  label: string;
+}
+
 export interface FieldMeta {
   key: string;
-  type: "slider" | "number" | "checkbox";
+  type: "slider" | "number" | "checkbox" | "select";
   description: string;
   min?: number;
   max?: number;
   step?: number;
   default?: unknown;
+  sentinel?: SentinelMeta;
+  options?: number[];
 }
 
-interface JSONSchemaProperty {
+export interface JSONSchemaProperty {
   type?: string;
   description?: string;
   minimum?: number;
   maximum?: number;
   multipleOf?: number;
   default?: unknown;
+  oneOf?: JSONSchemaProperty[];
+  const?: number;
+  enum?: number[];
 }
 
-interface JSONSchemaObject {
+export interface JSONSchemaObject {
   properties?: Record<string, JSONSchemaProperty>;
 }
 
@@ -27,6 +37,46 @@ export function extractFieldMeta(
 ): FieldMeta | null {
   const prop = schema.properties?.[key];
   if (!prop) return null;
+
+  // Handle oneOf pattern: const sentinel + range
+  if (prop.oneOf && prop.oneOf.length >= 2) {
+    const constBranch = prop.oneOf.find(
+      (b) => b.const !== undefined || (b.enum && b.enum.length === 1),
+    );
+    const rangeBranch = prop.oneOf.find(
+      (b) => b.type === "number" && b.minimum !== undefined && b.maximum !== undefined,
+    );
+    if (constBranch && rangeBranch) {
+      const sentinelValue = constBranch.const ?? constBranch.enum![0]!;
+      return {
+        key,
+        type: "slider",
+        description: prop.description ?? key,
+        min: rangeBranch.minimum,
+        max: rangeBranch.maximum,
+        step: rangeBranch.multipleOf,
+        default: prop.default,
+        sentinel: {
+          value: sentinelValue,
+          label: constBranch.description ?? String(sentinelValue),
+        },
+      };
+    }
+  }
+
+  if (prop.type !== "boolean" && prop.type !== "number" && prop.type !== "integer") {
+    return null;
+  }
+
+  if ((prop.type === "integer" || prop.type === "number") && prop.enum && prop.enum.length > 1) {
+    return {
+      key,
+      type: "select",
+      description: prop.description ?? key,
+      default: prop.default,
+      options: prop.enum,
+    };
+  }
 
   if (prop.type === "boolean") {
     return {
@@ -57,6 +107,19 @@ export function extractAllFieldMeta(schema: JSONSchemaObject): FieldMeta[] {
   return Object.keys(schema.properties)
     .map((key) => extractFieldMeta(schema, key))
     .filter((m): m is FieldMeta => m !== null);
+}
+
+export function extractNamedSchema(
+  openAPISchema: Record<string, unknown>,
+  schemaName: string,
+): JSONSchemaObject | null {
+  const schemas = (
+    openAPISchema as {
+      components?: { schemas?: Record<string, JSONSchemaObject> };
+    }
+  ).components?.schemas;
+  if (!schemas) return null;
+  return schemas[schemaName] ?? null;
 }
 
 export function extractSectionSchema(

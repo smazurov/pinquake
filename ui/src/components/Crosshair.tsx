@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { scaleLinear } from "d3-scale";
 import {
-  smoothValue,
+  decayValue,
   DEFAULT_CROSSHAIR_CONFIG,
   type CrosshairDisplayConfig,
 } from "../lib/crosshair";
@@ -11,7 +11,7 @@ const SEGMENT_GAP = 2;
 const MARGIN = 20;
 
 export interface CrosshairHandle {
-  pushSample: (gx: number, gy: number) => void;
+  pushSample: (x: number, y: number) => void;
 }
 
 export type { CrosshairDisplayConfig as CrosshairConfig };
@@ -35,9 +35,9 @@ const Crosshair = forwardRef<CrosshairHandle, CrosshairProps>(function Crosshair
   const configRef = useRef<CrosshairDisplayConfig>(DEFAULT_CROSSHAIR_CONFIG);
   useEffect(() => { configRef.current = { ...DEFAULT_CROSSHAIR_CONFIG, ...configOverride }; }, [configOverride]);
 
-  const pushSample = useCallback((gx: number, gy: number) => {
-    const x = configRef.current.swapXY ? gy : gx;
-    const y = configRef.current.swapXY ? gx : gy;
+  const pushSample = useCallback((sx: number, sy: number) => {
+    const x = configRef.current.swapXY ? sy : sx;
+    const y = configRef.current.swapXY ? sx : sy;
     targetRef.current = {
       right: Math.max(x, 0),
       left: Math.max(-x, 0),
@@ -58,10 +58,10 @@ const Crosshair = forwardRef<CrosshairHandle, CrosshairProps>(function Crosshair
     const target = targetRef.current;
     const display = displayRef.current;
 
-    display.right = smoothValue(display.right, target.right, config.smoothing);
-    display.left = smoothValue(display.left, target.left, config.smoothing);
-    display.up = smoothValue(display.up, target.up, config.smoothing);
-    display.down = smoothValue(display.down, target.down, config.smoothing);
+    display.right = decayValue(display.right, target.right, config.decayS);
+    display.left = decayValue(display.left, target.left, config.decayS);
+    display.up = decayValue(display.up, target.up, config.decayS);
+    display.down = decayValue(display.down, target.down, config.decayS);
 
     ctx.clearRect(0, 0, width, height);
 
@@ -88,7 +88,7 @@ const Crosshair = forwardRef<CrosshairHandle, CrosshairProps>(function Crosshair
     ctx.moveTo(cx - armLength, cy);
     ctx.lineTo(cx + armLength, cy);
     ctx.moveTo(cx, cy - armLength);
-    ctx.lineTo(cx, cy + armLength);
+    ctx.lineTo(cx, config.hideNegY ? cy : cy + armLength);
     ctx.stroke();
 
     const segSize = config.segmentSize;
@@ -131,7 +131,7 @@ const Crosshair = forwardRef<CrosshairHandle, CrosshairProps>(function Crosshair
     drawArm(display.right, 1, 0);
     drawArm(display.left, -1, 0);
     drawArm(display.up, 0, -1);
-    drawArm(display.down, 0, 1);
+    if (!config.hideNegY) drawArm(display.down, 0, 1);
 
     // Center dot
     ctx.fillStyle = "rgba(255, 255, 255, 0.6)";

@@ -6,6 +6,7 @@ interface CollapsibleProps {
   title?: string;
   header?: ReactNode;
   defaultOpen?: boolean;
+  forceOpen?: boolean;
   children: ReactNode;
 }
 
@@ -14,6 +15,7 @@ export default function Collapsible({
   title,
   header,
   defaultOpen = true,
+  forceOpen = false,
   children,
 }: Readonly<CollapsibleProps>) {
   const key = `collapsible:${id}`;
@@ -45,11 +47,11 @@ export default function Collapsible({
         className="flex w-full items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer select-none"
       >
         <ChevronRightIcon
-          className={`h-4 w-4 shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+          className={`h-4 w-4 shrink-0 transition-transform duration-200 ${open || forceOpen ? "rotate-90" : ""}`}
         />
         {header ?? title}
       </div>
-      {open && <div className="px-4 pb-4 space-y-4">{children}</div>}
+      {(open || forceOpen) && <div className="px-4 pb-4 space-y-4">{children}</div>}
     </div>
   );
 }
