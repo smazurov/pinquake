@@ -92,8 +92,8 @@ type CrosshairConfig struct {
 }
 
 type AutoLockConfig struct {
-	Timeout float64 `json:"timeout" toml:"timeout" doc:"Seconds of stability before auto-lock" minimum:"1" maximum:"60" default:"10"`
-	Epsilon float64 `json:"epsilon" toml:"epsilon" doc:"Max change (g) to count as stable" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.01"`
+	SpreadWindow    float64 `json:"spread_window" toml:"spread_window" doc:"Sliding window duration (s)" minimum:"1" maximum:"60" default:"5"`
+	SpreadThreshold float64 `json:"spread_threshold" toml:"spread_threshold" doc:"Stdev threshold (g) to trigger lock" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.005"`
 }
 
 type BLEConfig struct {
@@ -145,8 +145,8 @@ func DefaultConfig() PinQuakeConfig {
 			Decay:           0.3,
 		},
 		AutoLock: AutoLockConfig{
-			Timeout: 10,
-			Epsilon: 0.01,
+			SpreadWindow:    5,
+			SpreadThreshold: 0.005,
 		},
 		Display: DisplayConfig{
 			DelayMs:  0,

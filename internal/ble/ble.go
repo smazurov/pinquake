@@ -22,6 +22,11 @@ const (
 	StateConnected  State = "connected"
 )
 
+type accelSample struct {
+	mag float32
+	t   time.Time
+}
+
 type Scanner struct {
 	adapter  *bluetooth.Adapter
 	eventBus *events.Bus
@@ -46,12 +51,11 @@ type Scanner struct {
 	disconnecting bool
 	onConnect     func(sensorName string)
 
-	autoLockEnabled bool
-	autoLockTimeout time.Duration
-	autoLockEpsilon float32
-	autoLockRef     [3]float32
-	autoLockSince   time.Time
-	lastRaw         *orientation.Orientation
+	autoLockEnabled         bool
+	autoLockSpreadWindow    time.Duration
+	autoLockSpreadThreshold float32
+	autoLockSamples         []accelSample
+	lastRaw                 *orientation.Orientation
 
 	ready chan struct{} // closed when adapter.Enable() succeeds
 }
@@ -63,8 +67,8 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 		eventBus:        eventBus,
 		logger:          logger,
 		state:           StateIdle,
-		autoLockTimeout: 10 * time.Second,
-		autoLockEpsilon: 0.01,
+		autoLockSpreadWindow:    5 * time.Second,
+		autoLockSpreadThreshold: 0.005,
 		ready:           make(chan struct{}),
 	}
 }
@@ -128,18 +132,22 @@ func (s *Scanner) Sensor() sensors.Sensor {
 }
 
 
-func (s *Scanner) LockFrame() {
+// FrameAction performs a lock action and returns the resulting lock state.
+// Valid actions: "enable", "disable", "trigger".
+func (s *Scanner) FrameAction(action string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.autoLockEnabled = true
-	s.pendingLock = true
-	s.autoLockSince = time.Time{}
-}
-
-func (s *Scanner) UnlockFrame() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.resetAutoLock()
+	switch action {
+	case "enable":
+		s.autoLockEnabled = true
+		s.pendingLock = true
+		s.autoLockSamples = s.autoLockSamples[:0]
+	case "disable":
+		s.resetAutoLock()
+	case "trigger":
+		s.pendingLock = true
+	}
+	return s.autoLockEnabled
 }
 
 // resetAutoLock zeroes all auto-lock and reference frame fields. Caller must hold s.mu.
@@ -149,7 +157,7 @@ func (s *Scanner) resetAutoLock() {
 	s.gMag = 0
 	s.gravity = [3]float32{}
 	s.pendingLock = false
-	s.autoLockSince = time.Time{}
+	s.autoLockSamples = s.autoLockSamples[:0]
 }
 
 func (s *Scanner) IsFrameLocked() bool {
@@ -158,17 +166,11 @@ func (s *Scanner) IsFrameLocked() bool {
 	return s.autoLockEnabled
 }
 
-func (s *Scanner) ForceLockFrame() {
+func (s *Scanner) SetAutoLockParams(window time.Duration, threshold float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pendingLock = true
-}
-
-func (s *Scanner) SetAutoLockParams(epsilon float32, timeout time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.autoLockEpsilon = epsilon
-	s.autoLockTimeout = timeout
+	s.autoLockSpreadWindow = window
+	s.autoLockSpreadThreshold = threshold
 }
 
 func (s *Scanner) SetSwapXY(swap bool) {

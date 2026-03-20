@@ -10,6 +10,7 @@ import { ErrorAlert } from "./ErrorAlert";
 import Collapsible from "./Collapsible";
 
 const ICON_CLS = "h-[18px] w-[18px]";
+const FRAME_ENDPOINT = "/api/ble/frame" as const;
 
 type BLEState = "idle" | "scanning" | "connecting" | "connected" | "disconnected";
 
@@ -72,6 +73,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
   const [battery, setBattery] = useState<{ percent: number; volts: number; charging: boolean } | null>(null);
   const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [lockSpinKey, setLockSpinKey] = useState(0);
 
   const mainSSE = useRef<SSEClient<"/api/events"> | null>(null);
   const scanSSE = useRef<SSEClient<"/api/ble/scan"> | null>(null);
@@ -109,7 +111,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
       }
       if (data.status === "connected") {
         onSensorChangeRef.current?.(data.sensor_name ?? null);
-        void api.GET("/api/ble/frame").then(({ data }) => { if (data) setFrameLocked(data.locked); });
+        void api.GET(FRAME_ENDPOINT).then(({ data }) => { if (data) setFrameLocked(data.locked); });
       }
     });
     client.on("battery", (data) => {
@@ -120,6 +122,9 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
     });
     client.on("log", (data) => {
       setLogEntries((prev) => [...prev, data].slice(-200));
+      if (data.message.startsWith("Auto-locked") || data.message === "Frame force-locked") {
+        setLockSpinKey((n) => n + 1);
+      }
     });
     client.connect();
     mainSSE.current = client;
@@ -177,11 +182,10 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
   );
 
   const handleToggleFrameLock = useCallback(async () => {
-    const { error: err } = frameLocked
-      ? await api.POST("/api/ble/frame/unlock")
-      : await api.POST("/api/ble/frame/lock");
+    const action = frameLocked ? "disable" : "enable";
+    const { data, error: err } = await api.POST(FRAME_ENDPOINT, { body: { action } });
     if (err) { setError(err.detail ?? "Frame lock failed"); return; }
-    setFrameLocked(!frameLocked);
+    setFrameLocked(data?.locked ?? !frameLocked);
   }, [frameLocked]);
 
   const handleDisconnect = useCallback(async () => {
@@ -266,11 +270,18 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
             </button>
             {frameLocked && (
               <button
-                onClick={(e) => { e.stopPropagation(); void api.POST("/api/ble/frame/force-lock"); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLockSpinKey((n) => n + 1);
+                  void api.POST(FRAME_ENDPOINT, { body: { action: "trigger" } });
+                }}
                 className="text-slate-400 hover:text-slate-300 transition-colors"
                 title="Force lock now"
               >
-                <ArrowPathIcon className={ICON_CLS} />
+                <ArrowPathIcon
+                  key={lockSpinKey}
+                  className={`${ICON_CLS}${lockSpinKey > 0 ? " animate-[spin_0.5s_ease-in-out]" : ""}`}
+                />
               </button>
             )}
           </span>

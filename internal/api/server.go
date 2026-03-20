@@ -187,8 +187,8 @@ func (s *Server) log(level, message string) {
 func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
 	s.scanner.SetSwapXY(cfg.Display.SwapXY)
 	s.scanner.SetAutoLockParams(
-		float32(cfg.AutoLock.Epsilon),
-		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),
+		time.Duration(cfg.AutoLock.SpreadWindow*float64(time.Second)),
+		float32(cfg.AutoLock.SpreadThreshold),
 	)
 	s.trigger.SetConfig(viz.TriggerConfig{
 		DelayMs:  cfg.Display.DelayMs,

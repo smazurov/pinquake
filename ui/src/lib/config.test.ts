@@ -35,7 +35,7 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
       force_red_g: 0.1,
       decay_s: 0.3,
     },
-    auto_lock: { timeout: 10, epsilon: 0.01 },
+    auto_lock: { spread_window: 5, spread_threshold: 0.005 },
     display: { delay_ms: 0, trigger_g: 0.02, fade_s: 5, swap_xy: false },
   };
   return { ...defaults, ...partial };

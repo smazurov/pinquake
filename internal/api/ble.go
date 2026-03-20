@@ -27,6 +27,12 @@ type BLEActionResponse struct {
 	Body OKBody
 }
 
+type FrameActionRequest struct {
+	Body struct {
+		Action string `json:"action" doc:"Action to perform" enum:"enable,disable,trigger" example:"enable"`
+	}
+}
+
 type FrameStateBody struct {
 	Locked bool `json:"locked"`
 }
@@ -89,19 +95,19 @@ func (s *Server) registerBLERoutes() {
 		return bleOK, nil
 	})
 
-	huma.Post(bleGrp, "/frame/lock", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
-		s.scanner.LockFrame()
-		return bleOK, nil
-	})
-
-	huma.Post(bleGrp, "/frame/unlock", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
-		s.scanner.UnlockFrame()
-		return bleOK, nil
-	})
-
-	huma.Post(bleGrp, "/frame/force-lock", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
-		s.scanner.ForceLockFrame()
-		return bleOK, nil
+	huma.Post(bleGrp, "/frame", func(_ context.Context, input *FrameActionRequest) (*FrameStateResponse, error) {
+		logMessages := map[string]string{
+			"enable":  "Auto-lock enabled",
+			"disable": "Auto-lock disabled",
+			"trigger": "Frame force-locked",
+		}
+		msg, ok := logMessages[input.Body.Action]
+		if !ok {
+			return nil, huma.Error422UnprocessableEntity("invalid action: must be enable, disable, or trigger")
+		}
+		locked := s.scanner.FrameAction(input.Body.Action)
+		s.log("info", msg)
+		return &FrameStateResponse{Body: FrameStateBody{Locked: locked}}, nil
 	})
 
 	huma.Get(bleGrp, "/frame", func(_ context.Context, _ *struct{}) (*FrameStateResponse, error) {

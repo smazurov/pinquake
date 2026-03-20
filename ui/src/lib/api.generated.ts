@@ -48,58 +48,8 @@ export interface paths {
         /** Get API ble frame */
         get: operations["get-api-ble-frame"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ble/frame/force-lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post API ble frame force lock */
-        post: operations["post-api-ble-frame-force-lock"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ble/frame/lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post API ble frame lock */
-        post: operations["post-api-ble-frame-lock"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ble/frame/unlock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post API ble frame unlock */
-        post: operations["post-api-ble-frame-unlock"];
+        /** Post API ble frame */
+        post: operations["post-api-ble-frame"];
         delete?: never;
         options?: never;
         head?: never;
@@ -302,16 +252,16 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: double
-             * @description Max change (g) to count as stable
-             * @default 0.01
+             * @description Stdev threshold (g) to trigger lock
+             * @default 0.005
              */
-            epsilon: number;
+            spread_threshold: number;
             /**
              * Format: double
-             * @description Seconds of stability before auto-lock
-             * @default 10
+             * @description Sliding window duration (s)
+             * @default 5
              */
-            timeout: number;
+            spread_window: number;
         };
         BLEConfig: {
             /**
@@ -559,6 +509,20 @@ export interface components {
              */
             width: number;
         };
+        FrameActionRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/FrameActionRequestBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Action to perform
+             * @example enable
+             * @enum {string}
+             */
+            action: "enable" | "disable" | "trigger";
+        };
         FrameStateBody: {
             /**
              * Format: uri
@@ -799,14 +763,18 @@ export interface operations {
             };
         };
     };
-    "post-api-ble-frame-force-lock": {
+    "post-api-ble-frame": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FrameActionRequestBody"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -814,65 +782,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OKBody"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-        };
-    };
-    "post-api-ble-frame-lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OKBody"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-        };
-    };
-    "post-api-ble-frame-unlock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OKBody"];
+                    "application/json": components["schemas"]["FrameStateBody"];
                 };
             };
             /** @description Error */

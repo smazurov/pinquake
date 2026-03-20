@@ -9,47 +9,62 @@ import (
 	"github.com/smazurov/pinquake/internal/orientation"
 )
 
-func abs32(x float32) float32 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 func accelMag(ax, ay, az float32) float32 {
 	return float32(math.Sqrt(float64(ax*ax + ay*ay + az*az)))
 }
 
-// checkAutoLock evaluates stability and locks the reference frame when stable.
-// Caller must hold s.mu. Returns true if a new lock was applied.
+// checkAutoLock evaluates stability via stdev of accel magnitude over a sliding
+// window and locks the reference frame when stable. Caller must hold s.mu.
+// Returns true if a new lock was applied.
 func (s *Scanner) checkAutoLock(ori *orientation.Orientation) bool {
-	raw := [3]float32{ori.Ax, ori.Ay, ori.Az}
-	eps := s.autoLockEpsilon
-	timeout := s.autoLockTimeout
+	now := time.Now()
+	mag := accelMag(ori.Ax, ori.Ay, ori.Az)
+	s.autoLockSamples = append(s.autoLockSamples, accelSample{mag: mag, t: now})
 
-	if abs32(raw[0]-s.autoLockRef[0]) > eps ||
-		abs32(raw[1]-s.autoLockRef[1]) > eps ||
-		abs32(raw[2]-s.autoLockRef[2]) > eps {
-		s.autoLockRef = raw
-		s.autoLockSince = time.Now()
-	} else if s.autoLockSince.IsZero() {
-		s.autoLockSince = time.Now()
+	// Prune samples outside the window.
+	cutoff := now.Add(-s.autoLockSpreadWindow)
+	i := 0
+	for i < len(s.autoLockSamples) && s.autoLockSamples[i].t.Before(cutoff) {
+		i++
+	}
+	if i > 0 {
+		s.autoLockSamples = append(s.autoLockSamples[:0], s.autoLockSamples[i:]...)
 	}
 
-	if s.autoLockSince.IsZero() || time.Since(s.autoLockSince) < timeout {
+	// Need samples spanning the full window before evaluating.
+	if len(s.autoLockSamples) < 2 || now.Sub(s.autoLockSamples[0].t) < s.autoLockSpreadWindow {
 		return false
 	}
 
+	// Compute stdev of magnitudes.
+	var sum, sumSq float64
+	n := float64(len(s.autoLockSamples))
+	for _, sample := range s.autoLockSamples {
+		v := float64(sample.mag)
+		sum += v
+		sumSq += v * v
+	}
+	variance := sumSq/n - (sum/n)*(sum/n)
+	if variance < 0 {
+		variance = 0
+	}
+	stdev := float32(math.Sqrt(variance))
+
+	if stdev >= s.autoLockSpreadThreshold {
+		return false
+	}
+
+	// If already locked, check if we've drifted from the locked frame.
 	if s.refFrame != nil {
 		t := orientation.InReferenceFrame(ori, s.gravity, s.refRotation)
-		if abs32(t.Ax) <= eps && abs32(t.Ay) <= eps && abs32(t.Az) <= eps {
-			s.autoLockSince = time.Time{}
+		drift := accelMag(t.Ax, t.Ay, t.Az)
+		if drift <= s.autoLockSpreadThreshold {
 			return false
 		}
 	}
 
 	s.lockTo(ori)
-	s.autoLockSince = time.Time{}
+	s.autoLockSamples = s.autoLockSamples[:0]
 	return true
 }
 
@@ -85,12 +100,11 @@ func (s *Scanner) makeNotificationHandler() func([]byte) {
 		rot := s.refRotation
 		gravity := s.gravity
 		swap := s.swapXY
-		timeout := s.autoLockTimeout
 		s.mu.Unlock()
 
 		if autoLockFired {
 			s.eventBus.Publish(events.LogEntry{
-				Message:   fmt.Sprintf("Auto-locked: stable for %ds", int(timeout.Seconds())),
+				Message:   fmt.Sprintf("Auto-locked: stdev below %.4fg", s.autoLockSpreadThreshold),
 				Level:     "info",
 				Timestamp: time.Now().Format(time.RFC3339Nano),
 			})
@@ -101,10 +115,6 @@ func (s *Scanner) makeNotificationHandler() func([]byte) {
 		if ref != nil {
 			ori = orientation.InReferenceFrame(&ori, gravity, rot)
 		} else {
-			// No locked reference: rotate raw accel into a per-frame canonical
-			// frame (gravity → z) without subtracting gravity. The x/y
-			// components capture horizontal nudge (~0 at rest); directions
-			// are unstable but magnitudes are meaningful.
 			curRot := orientation.BuildLockRotation(&raw)
 			ori.Ax, ori.Ay, ori.Az = orientation.ApplyMat3(curRot, raw.Ax, raw.Ay, raw.Az)
 		}

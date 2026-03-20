@@ -1,7 +1,7 @@
 [app]
 [app.auto_lock]
-epsilon = 0.01
-timeout = 10.0
+spread_threshold = 0.005
+spread_window = 5.0
 
 [app.ble]
 device_address = 'EA:F0:F1:BC:59:DD'

@@ -7,6 +7,7 @@ type WaveformConfig = components["schemas"]["WaveformConfig"];
 type CrosshairConfig = components["schemas"]["CrosshairConfig"];
 type ExperimentConfig = components["schemas"]["ExperimentConfig"];
 type DisplayConfig = components["schemas"]["DisplayConfig"];
+type AutoLockConfig = components["schemas"]["AutoLockConfig"];
 import type { SSEStatus } from "../lib/api";
 import type { FieldMeta } from "../lib/schema";
 import { extractAllFieldMeta, extractSectionSchema, extractNamedSchema } from "../lib/schema";
@@ -39,6 +40,7 @@ interface SectionSchema {
   crosshair: FieldMeta[];
   experiment: FieldMeta[];
   display: FieldMeta[];
+  autoLock: FieldMeta[];
 }
 
 const HIDDEN_FIELDS = new Set(["enabled", "width", "height"]);
@@ -91,6 +93,11 @@ const saveDisplay = async (val: DisplayConfig) => {
   return { error };
 };
 
+const saveAutoLock = async (val: AutoLockConfig) => {
+  const { error } = await api.PUT("/api/config/auto_lock", { body: val });
+  return { error };
+};
+
 const saveSensorConfig = async (val: WT901Config) => {
   const { error } = await api.PUT("/api/config/sensor/WT901", { body: val });
   return { error };
@@ -114,8 +121,9 @@ export default function ConfigRoute() {
   const crosshairSave = useAutoSave(config?.crosshair ?? null, saveCrosshair);
   const experimentSave = useAutoSave(config?.experiment ?? null, saveExperiment);
   const displaySave = useAutoSave(config?.display ?? null, saveDisplay);
+  const autoLockSave = useAutoSave(config?.auto_lock ?? null, saveAutoLock);
   const sensorSave = useAutoSave(sensorConfig, saveSensorConfig);
-  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, experimentSave, displaySave, sensorSave);
+  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, experimentSave, displaySave, autoLockSave, sensorSave);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -132,6 +140,7 @@ export default function ConfigRoute() {
         const crosshairSchema = extractSectionSchema(schema, "crosshair");
         const experimentSchema = extractSectionSchema(schema, "experiment");
         const displaySchema = extractSectionSchema(schema, "display");
+        const autoLockSchema = extractSectionSchema(schema, "auto_lock");
         if (!waveformSchema || !crosshairSchema || !experimentSchema || !displaySchema) {
           setSchemaError("Schema missing waveform, crosshair, experiment, or display section");
           return;
@@ -141,6 +150,7 @@ export default function ConfigRoute() {
           crosshair: extractAllFieldMeta(crosshairSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
           experiment: extractAllFieldMeta(experimentSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
           display: extractAllFieldMeta(displaySchema, ["swap_xy"]),
+          autoLock: autoLockSchema ? extractAllFieldMeta(autoLockSchema) : [],
         });
 
         const sensorSchema = extractNamedSchema(schema, "WT901Config");
@@ -210,6 +220,16 @@ export default function ConfigRoute() {
     [],
   );
 
+  const updateAutoLock = useCallback(
+    (key: string, value: unknown) => {
+      setConfig((prev) => {
+        if (!prev) return prev;
+        return { ...prev, auto_lock: { ...prev.auto_lock, [key]: value } };
+      });
+    },
+    [],
+  );
+
   const updateSensor = useCallback(
     (key: string, value: unknown) => {
       setSensorConfig((prev) => {
@@ -273,6 +293,18 @@ export default function ConfigRoute() {
                   values={sensorConfig as unknown as Record<string, unknown>}
                   onChange={updateSensor}
                 />
+                {sectionSchema?.autoLock && sectionSchema.autoLock.length > 0 && (
+                  <>
+                    <div className="border-t border-slate-700 mt-4 pt-4">
+                      <p className="text-xs font-medium text-slate-400 mb-3">Auto Lock</p>
+                      <SchemaForm
+                        fields={sectionSchema.autoLock}
+                        values={config.auto_lock as unknown as Record<string, unknown>}
+                        onChange={updateAutoLock}
+                      />
+                    </div>
+                  </>
+                )}
               </Collapsible>
             )}
 
