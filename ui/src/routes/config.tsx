@@ -24,10 +24,11 @@ import SchemaForm from "../components/SchemaForm";
 import { InputField } from "../components/InputField";
 import experimentRegistry from "../lib/experimentRegistry";
 
-type PreviewTab = "canvas" | "crosshair" | "experiment";
+type PreviewTab = "off" | "canvas" | "crosshair" | "experiment";
 
 
 const TAB_LABELS: Record<PreviewTab, string> = {
+  off: "Off",
   canvas: "Canvas",
   crosshair: "Crosshair",
   experiment: "Experiment",
@@ -103,10 +104,32 @@ const saveSensorConfig = async (val: WT901Config) => {
   return { error };
 };
 
+function PreviewContent({ url, label }: Readonly<{ url: string | null; label: string }>) {
+  if (!url) {
+    return (
+      <div className="bg-black/50 flex items-center justify-center p-4 text-slate-500 text-sm">
+        Preview off
+      </div>
+    );
+  }
+  return (
+    <div className="bg-black/50 flex items-center justify-center p-4">
+      <div style={{ width: "100%", aspectRatio: "9 / 16" }}>
+        <iframe
+          src={url}
+          className="w-full h-full border-0 rounded"
+          style={{ background: "transparent" }}
+          title={`${label} Preview`}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function ConfigRoute() {
   const [config, setConfig] = useState<PinQuakeConfig | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [previewTab, setPreviewTab] = useState<PreviewTab>("canvas");
+  const [previewTab, setPreviewTab] = useState<PreviewTab>("crosshair");
   const [activeExperiments, setActiveExperiments] = useState<Set<string>>(
     () => new Set(experimentRegistry.map((e) => e.id)),
   );
@@ -253,6 +276,7 @@ export default function ConfigRoute() {
   }
 
   const enabledVizzes = [
+    "off" as PreviewTab,
     config.waveform.enabled && "canvas",
     config.crosshair.enabled && "crosshair",
     config.experiment.enabled && "experiment",
@@ -266,8 +290,8 @@ export default function ConfigRoute() {
     ? ""
     : `&show=${[...activeExperiments].join(",")}`;
   const experimentUrl = `${window.location.origin}/experiment?width=${config.experiment.width}&height=${config.experiment.height}${showParam}`;
-  const previewUrls: Record<PreviewTab, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl };
-  const previewUrl = activeTab ? previewUrls[activeTab] : canvasUrl;
+  const previewUrls: Record<string, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl };
+  const previewUrl = activeTab !== "off" ? previewUrls[activeTab] : null;
 
   return (
     <div className="min-h-screen bg-slate-900 overflow-auto">
@@ -435,28 +459,26 @@ export default function ConfigRoute() {
 
           </div>
 
-          {enabledVizzes.length > 0 && (
-            <div className="flex-1 min-w-0">
-              <div className="sticky top-4">
-                <Card padding="none" className="overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                    {enabledVizzes.length > 1 && (
-                      <div className="flex rounded overflow-hidden border border-slate-600 shrink-0">
-                        {enabledVizzes.map((tab) => (
-                          <button
-                            key={tab}
-                            onClick={() => setPreviewTab(tab)}
-                            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
-                              activeTab === tab
-                                ? "bg-blue-600 text-white"
-                                : "bg-slate-800 text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            {TAB_LABELS[tab]}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+          <div className="flex-1 min-w-0">
+            <div className="sticky top-4">
+              <Card padding="none" className="overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                  <div className="flex rounded overflow-hidden border border-slate-600 shrink-0">
+                    {enabledVizzes.map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setPreviewTab(tab)}
+                        className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                          activeTab === tab
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {TAB_LABELS[tab]}
+                      </button>
+                    ))}
+                  </div>
+                  {previewUrl && (
                     <input
                       type="text"
                       readOnly
@@ -464,26 +486,12 @@ export default function ConfigRoute() {
                       onFocus={(e) => e.target.select()}
                       className="flex-1 min-w-0 rounded bg-slate-800 border border-slate-600 px-2 py-1 text-xs text-slate-300 font-mono select-all"
                     />
-                  </div>
-                  <div className="bg-black/50 flex items-center justify-center p-4">
-                    <div
-                      style={{
-                        width: "100%",
-                        aspectRatio: "9 / 16",
-                      }}
-                    >
-                      <iframe
-                        src={previewUrl}
-                        className="w-full h-full border-0 rounded"
-                        style={{ background: "transparent" }}
-                        title={`${activeTab ? TAB_LABELS[activeTab] : "Viz"} Preview`}
-                      />
-                    </div>
-                  </div>
-                </Card>
-              </div>
+                  )}
+                </div>
+                <PreviewContent url={previewUrl} label={TAB_LABELS[activeTab]} />
+              </Card>
             </div>
-          )}
+          </div>
         </div>
       </Container>
     </div>
