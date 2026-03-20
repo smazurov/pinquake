@@ -98,8 +98,7 @@ func TestPutWaveformConfigAcceptsValidFloats(t *testing.T) {
 		"log_knee": 0.02,
 		"force_yellow_g": 0.03,
 		"force_red_g": 0.36,
-		"amp_scale": 1.0,
-		"swap_xy": false
+		"amp_scale": 1.0
 	}`
 
 	resp := api.Put("/api/config/waveform", strings.NewReader(body))

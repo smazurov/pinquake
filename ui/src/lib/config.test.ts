@@ -15,7 +15,6 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
       force_yellow_g: 0.03,
       force_red_g: 0.1,
       amp_scale: 1.0,
-      swap_xy: false,
     },
     crosshair: {
       enabled: true,
@@ -26,11 +25,18 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
       decay_s: 0.3,
       segment_size: 10,
       bar_thickness: 12,
-      swap_xy: false,
       hide_neg_y: false,
     },
+    experiment: {
+      enabled: true,
+      width: 400,
+      height: 400,
+      force_yellow_g: 0.03,
+      force_red_g: 0.1,
+      decay_s: 0.3,
+    },
     auto_lock: { timeout: 10, epsilon: 0.01 },
-    display: { delay_ms: 0, trigger_g: 0.02, fade_s: 5 },
+    display: { delay_ms: 0, trigger_g: 0.02, fade_s: 5, swap_xy: false },
   };
   return { ...defaults, ...partial };
 }
@@ -63,7 +69,6 @@ describe("mergeDefaults", () => {
         decay_s: 0.5,
         segment_size: 15,
         bar_thickness: 20,
-        swap_xy: true,
         hide_neg_y: false,
       },
     });

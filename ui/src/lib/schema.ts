@@ -102,9 +102,15 @@ export function extractFieldMeta(
   };
 }
 
-export function extractAllFieldMeta(schema: JSONSchemaObject): FieldMeta[] {
+export function extractAllFieldMeta(
+  schema: JSONSchemaObject,
+  keyOrder?: string[],
+): FieldMeta[] {
   if (!schema.properties) return [];
-  return Object.keys(schema.properties)
+  const keys = keyOrder
+    ? [...keyOrder, ...Object.keys(schema.properties).filter((k) => !keyOrder.includes(k))]
+    : Object.keys(schema.properties);
+  return keys
     .map((key) => extractFieldMeta(schema, key))
     .filter((m): m is FieldMeta => m !== null);
 }
@@ -143,10 +149,12 @@ export function extractSectionSchema(
     | JSONSchemaObject
     | undefined;
   if (!section?.properties) {
-    // Try $ref resolution — look for the section type directly
+    // Try $ref resolution — convert snake_case section name to PascalCase type name
     const sectionTypeName =
-      sectionPath.charAt(0).toUpperCase() +
-      sectionPath.slice(1) +
+      sectionPath
+        .split("_")
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join("") +
       "Config";
     return schemas[sectionTypeName] ?? null;
   }

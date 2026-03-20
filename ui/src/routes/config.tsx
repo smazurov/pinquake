@@ -5,6 +5,7 @@ import type { components } from "../lib/api.generated";
 type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
 type WaveformConfig = components["schemas"]["WaveformConfig"];
 type CrosshairConfig = components["schemas"]["CrosshairConfig"];
+type ExperimentConfig = components["schemas"]["ExperimentConfig"];
 type DisplayConfig = components["schemas"]["DisplayConfig"];
 import type { SSEStatus } from "../lib/api";
 import type { FieldMeta } from "../lib/schema";
@@ -20,14 +21,23 @@ import Collapsible from "../components/Collapsible";
 import { ErrorAlert } from "../components/ErrorAlert";
 import SchemaForm from "../components/SchemaForm";
 import { InputField } from "../components/InputField";
+import experimentRegistry from "../lib/experimentRegistry";
 
-type PreviewTab = "canvas" | "crosshair";
+type PreviewTab = "canvas" | "crosshair" | "experiment";
+
+
+const TAB_LABELS: Record<PreviewTab, string> = {
+  canvas: "Canvas",
+  crosshair: "Crosshair",
+  experiment: "Experiment",
+};
 
 type WT901Config = components["schemas"]["WT901Config"];
 
 interface SectionSchema {
   waveform: FieldMeta[];
   crosshair: FieldMeta[];
+  experiment: FieldMeta[];
   display: FieldMeta[];
 }
 
@@ -71,6 +81,11 @@ const saveCrosshair = async (val: CrosshairConfig) => {
   return { error };
 };
 
+const saveExperiment = async (val: ExperimentConfig) => {
+  const { error } = await api.PUT("/api/config/experiment", { body: val });
+  return { error };
+};
+
 const saveDisplay = async (val: DisplayConfig) => {
   const { error } = await api.PUT("/api/config/display", { body: val });
   return { error };
@@ -85,6 +100,9 @@ export default function ConfigRoute() {
   const [config, setConfig] = useState<PinQuakeConfig | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTab>("canvas");
+  const [activeExperiments, setActiveExperiments] = useState<Set<string>>(
+    () => new Set(experimentRegistry.map((e) => e.id)),
+  );
   const [sseStatus, setSSEStatus] = useState<SSEStatus>("connecting");
   const [sectionSchema, setSectionSchema] = useState<SectionSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
@@ -94,9 +112,10 @@ export default function ConfigRoute() {
 
   const waveformSave = useAutoSave(config?.waveform ?? null, saveWaveform);
   const crosshairSave = useAutoSave(config?.crosshair ?? null, saveCrosshair);
+  const experimentSave = useAutoSave(config?.experiment ?? null, saveExperiment);
   const displaySave = useAutoSave(config?.display ?? null, saveDisplay);
   const sensorSave = useAutoSave(sensorConfig, saveSensorConfig);
-  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, displaySave, sensorSave);
+  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, experimentSave, displaySave, sensorSave);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -111,15 +130,17 @@ export default function ConfigRoute() {
       .then((schema) => {
         const waveformSchema = extractSectionSchema(schema, "waveform");
         const crosshairSchema = extractSectionSchema(schema, "crosshair");
+        const experimentSchema = extractSectionSchema(schema, "experiment");
         const displaySchema = extractSectionSchema(schema, "display");
-        if (!waveformSchema || !crosshairSchema || !displaySchema) {
-          setSchemaError("Schema missing waveform, crosshair, or display section");
+        if (!waveformSchema || !crosshairSchema || !experimentSchema || !displaySchema) {
+          setSchemaError("Schema missing waveform, crosshair, experiment, or display section");
           return;
         }
         setSectionSchema({
           waveform: extractAllFieldMeta(waveformSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
           crosshair: extractAllFieldMeta(crosshairSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
-          display: extractAllFieldMeta(displaySchema),
+          experiment: extractAllFieldMeta(experimentSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
+          display: extractAllFieldMeta(displaySchema, ["swap_xy"]),
         });
 
         const sensorSchema = extractNamedSchema(schema, "WT901Config");
@@ -169,6 +190,16 @@ export default function ConfigRoute() {
     [],
   );
 
+  const updateExperiment = useCallback(
+    (key: string, value: unknown) => {
+      setConfig((prev) => {
+        if (!prev) return prev;
+        return { ...prev, experiment: { ...prev.experiment, [key]: value } };
+      });
+    },
+    [],
+  );
+
   const updateDisplay = useCallback(
     (key: string, value: unknown) => {
       setConfig((prev) => {
@@ -204,13 +235,19 @@ export default function ConfigRoute() {
   const enabledVizzes = [
     config.waveform.enabled && "canvas",
     config.crosshair.enabled && "crosshair",
+    config.experiment.enabled && "experiment",
   ].filter(Boolean) as PreviewTab[];
 
   const activeTab = enabledVizzes.includes(previewTab) ? previewTab : enabledVizzes[0];
 
   const canvasUrl = `${window.location.origin}/canvas?width=${config.waveform.width}&height=${config.waveform.height}`;
   const crosshairUrl = `${window.location.origin}/crosshair?width=${config.crosshair.width}&height=${config.crosshair.height}`;
-  const previewUrl = activeTab === "canvas" ? canvasUrl : crosshairUrl;
+  const showParam = activeExperiments.size === experimentRegistry.length
+    ? ""
+    : `&show=${[...activeExperiments].join(",")}`;
+  const experimentUrl = `${window.location.origin}/experiment?width=${config.experiment.width}&height=${config.experiment.height}${showParam}`;
+  const previewUrls: Record<PreviewTab, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl };
+  const previewUrl = activeTab ? previewUrls[activeTab] : canvasUrl;
 
   return (
     <div className="min-h-screen bg-slate-900 overflow-auto">
@@ -302,6 +339,56 @@ export default function ConfigRoute() {
               </Collapsible>
             )}
 
+            {config.experiment.enabled && (
+              <Collapsible id="experiment" title="Experiment">
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-slate-400 mb-2">Active experiments</p>
+                  <div className="flex flex-wrap gap-3">
+                    {experimentRegistry.map((entry) => (
+                      <label key={entry.id} className="flex items-center gap-1.5 text-sm text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={activeExperiments.has(entry.id)}
+                          onChange={() => {
+                            setActiveExperiments((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(entry.id)) next.delete(entry.id);
+                              else next.add(entry.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        {entry.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <InputField
+                    label="Width"
+                    type="number"
+                    value={config.experiment.width}
+                    onChange={(e) => updateExperiment("width", Number(e.target.value))}
+                  />
+                  <InputField
+                    label="Height"
+                    type="number"
+                    value={config.experiment.height}
+                    onChange={(e) => updateExperiment("height", Number(e.target.value))}
+                  />
+                </div>
+                {sectionSchema?.experiment ? (
+                  <SchemaForm
+                    fields={sectionSchema.experiment}
+                    values={config.experiment as unknown as Record<string, unknown>}
+                    onChange={updateExperiment}
+                  />
+                ) : (
+                  <p className="text-xs text-slate-500">Loading schema...</p>
+                )}
+              </Collapsible>
+            )}
+
             <Collapsible id="display" title="Display">
               {sectionSchema?.display ? (
                 <SchemaForm
@@ -333,7 +420,7 @@ export default function ConfigRoute() {
                                 : "bg-slate-800 text-slate-400 hover:text-slate-200"
                             }`}
                           >
-                            {tab === "canvas" ? "Canvas" : "Crosshair"}
+                            {TAB_LABELS[tab]}
                           </button>
                         ))}
                       </div>
@@ -357,7 +444,7 @@ export default function ConfigRoute() {
                         src={previewUrl}
                         className="w-full h-full border-0 rounded"
                         style={{ background: "transparent" }}
-                        title={`${activeTab === "canvas" ? "Canvas" : "Crosshair"} Preview`}
+                        title={`${activeTab ? TAB_LABELS[activeTab] : "Viz"} Preview`}
                       />
                     </div>
                   </div>

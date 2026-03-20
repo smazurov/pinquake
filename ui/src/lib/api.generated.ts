@@ -215,6 +215,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/experiment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API config experiment */
+        get: operations["get-api-config-experiment"];
+        /** Put API config experiment */
+        put: operations["put-api-config-experiment"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/sensor/WT901": {
         parameters: {
             query?: never;
@@ -406,11 +424,6 @@ export interface components {
              */
             segment_size: number;
             /**
-             * @description Swap X and Y axes
-             * @default false
-             */
-            swap_xy: boolean;
-            /**
              * Format: int64
              * @description Canvas width (px)
              * @default 608
@@ -444,6 +457,11 @@ export interface components {
              * @default 5
              */
             fade_s: -1 | number;
+            /**
+             * @description Swap X and Y axes
+             * @default false
+             */
+            swap_xy: boolean;
             /**
              * Format: double
              * @description Movement threshold on X/Y axes (g)
@@ -498,6 +516,49 @@ export interface components {
              */
             type: string;
         };
+        ExperimentConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ExperimentConfig.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: double
+             * @description Decay time (s)
+             * @default 0.3
+             */
+            decay_s: number;
+            /**
+             * @description Enable visualization
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Format: double
+             * @description Red threshold (g)
+             * @default 0.1
+             */
+            force_red_g: number;
+            /**
+             * Format: double
+             * @description Yellow threshold (g)
+             * @default 0.03
+             */
+            force_yellow_g: number;
+            /**
+             * Format: int64
+             * @description Canvas height (px)
+             * @default 1080
+             */
+            height: number;
+            /**
+             * Format: int64
+             * @description Canvas width (px)
+             * @default 608
+             */
+            width: number;
+        };
         FrameStateBody: {
             /**
              * Format: uri
@@ -535,6 +596,7 @@ export interface components {
             ble: components["schemas"]["BLEConfig"];
             crosshair: components["schemas"]["CrosshairConfig"];
             display: components["schemas"]["DisplayConfig"];
+            experiment: components["schemas"]["ExperimentConfig"];
             sensor?: {
                 [key: string]: unknown;
             };
@@ -630,11 +692,6 @@ export interface components {
              * @default 0.02
              */
             log_knee: number;
-            /**
-             * @description Swap X and Y axes
-             * @default false
-             */
-            swap_xy: boolean;
             /**
              * Format: int64
              * @description Canvas width (px)
@@ -1133,6 +1190,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DisplayConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-config-experiment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-api-config-experiment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExperimentConfig"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentConfig"];
                 };
             };
             /** @description Error */

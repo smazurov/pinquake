@@ -68,6 +68,7 @@ type ForceThresholds struct {
 }
 
 type DisplayConfig struct {
+	SwapXY   bool        `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
 	DelayMs  int         `json:"delay_ms" toml:"delay_ms" doc:"Delay sensor readings (ms)" minimum:"0" maximum:"2000" multipleOf:"5" default:"0"`
 	TriggerG float64     `json:"trigger_g" toml:"trigger_g" doc:"Movement threshold on X/Y axes (g)" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.02"`
 	FadeS    FadeSeconds `json:"fade_s" toml:"fade_s" doc:"Visible duration after trigger (s)" default:"5"`
@@ -79,7 +80,6 @@ type WaveformConfig struct {
 	BufferSize int     `json:"buffer_size" toml:"buffer_size" doc:"Ring buffer sample count" minimum:"32" maximum:"512" default:"256"`
 	LogKnee    float64 `json:"log_knee" toml:"log_knee" doc:"Log compression knee" minimum:"0.001" maximum:"0.1" multipleOf:"0.001" default:"0.02"`
 	AmpScale   float64 `json:"amp_scale" toml:"amp_scale" doc:"Amplitude multiplier" minimum:"0.1" maximum:"5.0" multipleOf:"0.1" default:"1.0"`
-	SwapXY     bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
 }
 
 type CrosshairConfig struct {
@@ -88,7 +88,6 @@ type CrosshairConfig struct {
 	Decay        float64 `json:"decay_s" toml:"decay_s" doc:"Decay time (s)" minimum:"0" maximum:"2" multipleOf:"0.01" default:"0.3"`
 	SegmentSize  int     `json:"segment_size" toml:"segment_size" doc:"Bar segment size (px)" minimum:"2" maximum:"30" default:"10"`
 	BarThickness int     `json:"bar_thickness" toml:"bar_thickness" doc:"Bar thickness (px)" minimum:"4" maximum:"30" default:"12"`
-	SwapXY       bool    `json:"swap_xy" toml:"swap_xy" doc:"Swap X and Y axes" default:"false"`
 	HideNegY     bool    `json:"hide_neg_y" toml:"hide_neg_y" doc:"Hide negative Y arm" default:"false"`
 }
 
@@ -103,13 +102,20 @@ type BLEConfig struct {
 	SensorName    string `json:"sensor_name" toml:"sensor_name"`
 }
 
+type ExperimentConfig struct {
+	VizBase
+	ForceThresholds
+	Decay  float64 `json:"decay_s" toml:"decay_s" doc:"Decay time (s)" minimum:"0.05" maximum:"2" multipleOf:"0.01" default:"0.3"`
+}
+
 type PinQuakeConfig struct {
-	BLE       BLEConfig       `json:"ble" toml:"ble"`
-	Waveform  WaveformConfig  `json:"waveform" toml:"waveform"`
-	Crosshair CrosshairConfig `json:"crosshair" toml:"crosshair"`
-	AutoLock  AutoLockConfig  `json:"auto_lock" toml:"auto_lock"`
-	Display   DisplayConfig   `json:"display" toml:"display"`
-	Sensor    map[string]any  `json:"sensor,omitempty" toml:"sensor,omitempty"`
+	BLE        BLEConfig        `json:"ble" toml:"ble"`
+	Waveform   WaveformConfig   `json:"waveform" toml:"waveform"`
+	Crosshair  CrosshairConfig  `json:"crosshair" toml:"crosshair"`
+	Experiment ExperimentConfig `json:"experiment" toml:"experiment"`
+	AutoLock   AutoLockConfig   `json:"auto_lock" toml:"auto_lock"`
+	Display    DisplayConfig    `json:"display" toml:"display"`
+	Sensor     map[string]any   `json:"sensor,omitempty" toml:"sensor,omitempty"`
 }
 
 type ConfigResponse struct {
@@ -132,6 +138,11 @@ func DefaultConfig() PinQuakeConfig {
 			Decay:           0.3,
 			SegmentSize:     10,
 			BarThickness:    12,
+		},
+		Experiment: ExperimentConfig{
+			VizBase:         VizBase{Enabled: true, Width: 400, Height: 400},
+			ForceThresholds: ForceThresholds{ForceYellowG: 0.03, ForceRedG: 0.10},
+			Decay:           0.3,
 		},
 		AutoLock: AutoLockConfig{
 			Timeout: 10,

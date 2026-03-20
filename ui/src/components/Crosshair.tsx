@@ -35,9 +35,7 @@ const Crosshair = forwardRef<CrosshairHandle, CrosshairProps>(function Crosshair
   const configRef = useRef<CrosshairDisplayConfig>(DEFAULT_CROSSHAIR_CONFIG);
   useEffect(() => { configRef.current = { ...DEFAULT_CROSSHAIR_CONFIG, ...configOverride }; }, [configOverride]);
 
-  const pushSample = useCallback((sx: number, sy: number) => {
-    const x = configRef.current.swapXY ? sy : sx;
-    const y = configRef.current.swapXY ? sx : sy;
+  const pushSample = useCallback((x: number, y: number) => {
     targetRef.current = {
       right: Math.max(x, 0),
       left: Math.max(-x, 0),

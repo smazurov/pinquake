@@ -185,7 +185,7 @@ func (s *Server) log(level, message string) {
 }
 
 func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
-	s.scanner.SetSwapXY(cfg.Waveform.SwapXY)
+	s.scanner.SetSwapXY(cfg.Display.SwapXY)
 	s.scanner.SetAutoLockParams(
 		float32(cfg.AutoLock.Epsilon),
 		time.Duration(cfg.AutoLock.Timeout*float64(time.Second)),

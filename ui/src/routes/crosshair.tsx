@@ -44,7 +44,6 @@ export default function CrosshairRoute() {
           decayS: cfg.decay_s,
           segmentSize: cfg.segment_size,
           barThickness: cfg.bar_thickness,
-          swapXY: cfg.swap_xy,
           hideNegY: cfg.hide_neg_y,
         });
       })

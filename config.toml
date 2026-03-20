@@ -9,25 +9,33 @@ device_name = 'WT901BLE68'
 sensor_name = 'WT901'
 
 [app.crosshair]
-enabled = true
-width = 200
-height = 200
-force_yellow_g = 0.03
-force_red_g = 0.1
-decay_s = 0.75
-segment_size = 10
 bar_thickness = 12
-swap_xy = false
-hide_neg_y = false
+decay_s = 0.75
+enabled = true
+force_red_g = 0.1
+force_yellow_g = 0.03
+height = 200
+hide_neg_y = true
+segment_size = 10
+width = 200
 
 [app.display]
+swap_xy = true
 delay_ms = 10
-fade_s = -1.0
 trigger_g = 0.105
+fade_s = -1.0
+
+[app.experiment]
+decay_s = 1.7
+enabled = true
+force_red_g = 0.69
+force_yellow_g = 0.15
+height = 400
+width = 400
 
 [app.sensor]
 [app.sensor.WT901]
-accel_filter = 2
+accel_filter = 8
 accel_range_g = 4
 bandwidth_hz = 44
 output_rate_hz = 200
@@ -41,5 +49,4 @@ force_red_g = 0.1
 force_yellow_g = 0.03
 height = 1080
 log_knee = 0.02
-swap_xy = false
 width = 608

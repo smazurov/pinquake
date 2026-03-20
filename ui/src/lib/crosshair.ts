@@ -6,7 +6,6 @@ export interface CrosshairDisplayConfig {
   decayS: number;
   segmentSize: number;
   barThickness: number;
-  swapXY: boolean;
   hideNegY: boolean;
 }
 
@@ -16,7 +15,6 @@ export const DEFAULT_CROSSHAIR_CONFIG: CrosshairDisplayConfig = {
   decayS: 0.3,
   segmentSize: 10,
   barThickness: 12,
-  swapXY: false,
   hideNegY: false,
 };
 

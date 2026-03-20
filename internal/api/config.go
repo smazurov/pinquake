@@ -22,6 +22,7 @@ func (s *Server) registerConfigRoutes() {
 	registerSection(s, "ble", func(c *data.PinQuakeConfig) *data.BLEConfig { return &c.BLE })
 	registerSection(s, "waveform", func(c *data.PinQuakeConfig) *data.WaveformConfig { return &c.Waveform })
 	registerSection(s, "crosshair", func(c *data.PinQuakeConfig) *data.CrosshairConfig { return &c.Crosshair })
+	registerSection(s, "experiment", func(c *data.PinQuakeConfig) *data.ExperimentConfig { return &c.Experiment })
 	registerSection(s, "auto_lock", func(c *data.PinQuakeConfig) *data.AutoLockConfig { return &c.AutoLock })
 	registerSection(s, "display", func(c *data.PinQuakeConfig) *data.DisplayConfig { return &c.Display })
 
