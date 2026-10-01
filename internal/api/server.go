@@ -187,6 +187,12 @@ func (s *Server) log(level, message string) {
 func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
 	s.scanner.SetSwapXY(cfg.Display.SwapXY)
 	s.scanner.ConfigureFrameLock(frameLockConfig(cfg))
+	s.scanner.ConfigureLink(ble.SupervisorConfig{
+		ScanWindow:     seconds(cfg.BLELink.ScanWindowS),
+		ConnectTimeout: seconds(cfg.BLELink.ConnectTimeoutS),
+		BackoffMin:     seconds(cfg.BLELink.BackoffMinS),
+		BackoffMax:     seconds(cfg.BLELink.BackoffMaxS),
+	})
 	s.trigger.SetConfig(viz.TriggerConfig{
 		DelayMs:  cfg.Display.DelayMs,
 		TriggerG: cfg.Display.TriggerG,
@@ -194,10 +200,12 @@ func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
 	})
 }
 
+func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+
 func frameLockConfig(cfg data.PinQuakeConfig) framelock.Config {
 	return framelock.Config{
 		Enabled:         cfg.Frame.AutoLock,
-		Window:          time.Duration(cfg.AutoLock.SpreadWindow * float64(time.Second)),
+		Window:          seconds(cfg.AutoLock.SpreadWindow),
 		Threshold:       float32(cfg.AutoLock.SpreadThreshold),
 		RelockThreshold: float32(cfg.AutoLock.RelockThreshold),
 	}

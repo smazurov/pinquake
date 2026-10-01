@@ -20,6 +20,7 @@ func (s *Server) registerConfigRoutes() {
 	}, huma.OperationTags("config"))
 
 	registerSection(s, "ble", func(c *data.PinQuakeConfig) *data.BLEConfig { return &c.BLE })
+	registerSection(s, "ble_link", func(c *data.PinQuakeConfig) *data.BLELinkConfig { return &c.BLELink })
 	registerSection(s, "waveform", func(c *data.PinQuakeConfig) *data.WaveformConfig { return &c.Waveform })
 	registerSection(s, "crosshair", func(c *data.PinQuakeConfig) *data.CrosshairConfig { return &c.Crosshair })
 	registerSection(s, "experiment", func(c *data.PinQuakeConfig) *data.ExperimentConfig { return &c.Experiment })

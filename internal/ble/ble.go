@@ -192,6 +192,9 @@ func (s *Scanner) publishFrameState(lock *framelock.Lock) {
 	s.publishFrame(ev)
 }
 
+// ConfigureLink sets the connection supervisor's timings.
+func (s *Scanner) ConfigureLink(cfg SupervisorConfig) { s.sup.Configure(cfg) }
+
 func (s *Scanner) SetSwapXY(swap bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

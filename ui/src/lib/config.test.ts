@@ -6,6 +6,7 @@ type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
 function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
   const defaults: PinQuakeConfig = {
     ble: { device_address: "", device_name: "", sensor_name: "" },
+    ble_link: { scan_window_s: 10, connect_timeout_s: 20, backoff_min_s: 2, backoff_max_s: 30 },
     waveform: {
       enabled: true,
       width: 608,

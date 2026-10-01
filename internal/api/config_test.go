@@ -139,3 +139,17 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Errorf("expected BarThickness 20, got %d", cfg.Crosshair.BarThickness)
 	}
 }
+
+func TestPutBLELinkRejectsZeroTimeout(t *testing.T) {
+	_, api := humatest.New(t)
+	huma.Put(api, "/api/config/ble_link", func(_ context.Context, input *sectionRequest[data.BLELinkConfig]) (*sectionResponse[data.BLELinkConfig], error) {
+		return &sectionResponse[data.BLELinkConfig]{Body: input.Body}, nil
+	})
+
+	body := `{"scan_window_s": 10, "connect_timeout_s": 0, "backoff_min_s": 2, "backoff_max_s": 30}`
+	resp := api.Put("/api/config/ble_link", strings.NewReader(body))
+
+	if resp.Code != http.StatusUnprocessableEntity {
+		t.Errorf("PUT with connect_timeout_s=0: want 422, got %d\nBody: %s", resp.Code, resp.Body.String())
+	}
+}

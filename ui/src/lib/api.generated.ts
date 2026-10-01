@@ -129,6 +129,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/ble_link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API config ble link */
+        get: operations["get-api-config-ble-link"];
+        /** Put API config ble link */
+        put: operations["put-api-config-ble-link"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/crosshair": {
         parameters: {
             query?: never;
@@ -297,6 +315,38 @@ export interface components {
             device_address: string;
             device_name: string;
             sensor_name: string;
+        };
+        BLELinkConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BLELinkConfig.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: double
+             * @description Longest retry pause (s)
+             * @default 30
+             */
+            backoff_max_s: number;
+            /**
+             * Format: double
+             * @description First retry pause; doubles per failure (s)
+             * @default 2
+             */
+            backoff_min_s: number;
+            /**
+             * Format: double
+             * @description Connect + sensor setup limit (s)
+             * @default 20
+             */
+            connect_timeout_s: number;
+            /**
+             * Format: double
+             * @description Search scan length before pausing (s)
+             * @default 10
+             */
+            scan_window_s: number;
         };
         BLEScanResultEvent: {
             address: string;
@@ -621,6 +671,7 @@ export interface components {
             readonly $schema?: string;
             auto_lock: components["schemas"]["AutoLockConfig"];
             ble: components["schemas"]["BLEConfig"];
+            ble_link: components["schemas"]["BLELinkConfig"];
             crosshair: components["schemas"]["CrosshairConfig"];
             display: components["schemas"]["DisplayConfig"];
             experiment: components["schemas"]["ExperimentConfig"];
@@ -1090,6 +1141,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BLEConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-config-ble-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BLELinkConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-api-config-ble-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BLELinkConfig"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BLELinkConfig"];
                 };
             };
             /** @description Error */

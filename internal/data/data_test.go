@@ -219,3 +219,18 @@ func TestSaveAllRoundTrip(t *testing.T) {
 		t.Errorf("TriggerG: want 0.044, got %v", loaded.Display.TriggerG)
 	}
 }
+
+func TestLoadFromPathDefaultsBLELinkTimings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[app.ble_link]\nscan_window_s = 15.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFromPath(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := BLELinkConfig{ScanWindowS: 15, ConnectTimeoutS: 20, BackoffMinS: 2, BackoffMaxS: 30}
+	if cfg.BLELink != want {
+		t.Errorf("BLELink = %+v, want %+v (unset fields keep defaults)", cfg.BLELink, want)
+	}
+}

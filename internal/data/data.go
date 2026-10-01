@@ -110,6 +110,15 @@ type BLEConfig struct {
 	SensorName    string `json:"sensor_name" toml:"sensor_name"`
 }
 
+// BLELinkConfig tunes how the connection supervisor searches for and
+// connects to the saved device.
+type BLELinkConfig struct {
+	ScanWindowS     float64 `json:"scan_window_s" toml:"scan_window_s" doc:"Search scan length before pausing (s)" minimum:"1" maximum:"120" default:"10"`
+	ConnectTimeoutS float64 `json:"connect_timeout_s" toml:"connect_timeout_s" doc:"Connect + sensor setup limit (s)" minimum:"1" maximum:"120" default:"20"`
+	BackoffMinS     float64 `json:"backoff_min_s" toml:"backoff_min_s" doc:"First retry pause; doubles per failure (s)" minimum:"0.5" maximum:"60" default:"2"`
+	BackoffMaxS     float64 `json:"backoff_max_s" toml:"backoff_max_s" doc:"Longest retry pause (s)" minimum:"1" maximum:"600" default:"30"`
+}
+
 type ExperimentConfig struct {
 	VizBase
 	ForceThresholds
@@ -125,6 +134,7 @@ type PlumbBobConfig struct {
 
 type PinQuakeConfig struct {
 	BLE        BLEConfig        `json:"ble" toml:"ble"`
+	BLELink    BLELinkConfig    `json:"ble_link" toml:"ble_link"`
 	Waveform   WaveformConfig   `json:"waveform" toml:"waveform"`
 	Crosshair  CrosshairConfig  `json:"crosshair" toml:"crosshair"`
 	Experiment ExperimentConfig `json:"experiment" toml:"experiment"`
@@ -142,6 +152,12 @@ type ConfigResponse struct {
 func DefaultConfig() PinQuakeConfig {
 	return PinQuakeConfig{
 		BLE: BLEConfig{},
+		BLELink: BLELinkConfig{
+			ScanWindowS:     10,
+			ConnectTimeoutS: 20,
+			BackoffMinS:     2,
+			BackoffMaxS:     30,
+		},
 		Waveform: WaveformConfig{
 			VizBase:         VizBase{Enabled: true, Width: 608, Height: 1080},
 			ForceThresholds: ForceThresholds{ForceYellowG: 0.03, ForceRedG: 0.10},
