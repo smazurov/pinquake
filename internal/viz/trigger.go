@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/smazurov/pinquake/internal/events"
 )
 
@@ -28,8 +27,7 @@ type bufferedEvent struct {
 }
 
 type Trigger struct {
-	bus   *events.Bus
-	clock clockwork.Clock
+	bus *events.Bus
 
 	mu       sync.Mutex
 	triggerG float64
@@ -37,7 +35,7 @@ type Trigger struct {
 	delayDur time.Duration
 
 	visible   atomic.Bool
-	hideTimer clockwork.Timer
+	hideTimer *time.Timer
 
 	ring    [ringSize]bufferedEvent
 	ringW   int
@@ -52,13 +50,8 @@ type Trigger struct {
 }
 
 func NewTrigger(bus *events.Bus, cfg TriggerConfig) *Trigger {
-	return newTrigger(bus, cfg, clockwork.NewRealClock())
-}
-
-func newTrigger(bus *events.Bus, cfg TriggerConfig, clk clockwork.Clock) *Trigger {
 	return &Trigger{
 		bus:      bus,
-		clock:    clk,
 		triggerG: cfg.TriggerG,
 		fadeDur:  time.Duration(cfg.FadeS * float64(time.Second)),
 		delayDur: time.Duration(cfg.DelayMs) * time.Millisecond,
@@ -104,7 +97,7 @@ func (t *Trigger) SetConfig(cfg TriggerConfig) {
 		t.hideTimer = nil
 	}
 	if t.fadeDur >= 0 && t.visible.Load() {
-		t.hideTimer = t.clock.AfterFunc(t.fadeDur, t.publishHide)
+		t.hideTimer = time.AfterFunc(t.fadeDur, t.publishHide)
 	}
 	t.mu.Unlock()
 }
@@ -114,7 +107,7 @@ func (t *Trigger) publishHide() {
 	t.bus.Publish(events.VizTriggerEvent{
 		Visible:   false,
 		Class:     defaultClass,
-		Timestamp: t.clock.Now().Format(time.RFC3339Nano),
+		Timestamp: time.Now().Format(time.RFC3339Nano),
 	})
 }
 
@@ -144,7 +137,7 @@ func (t *Trigger) onOrientation(e events.OrientationEvent) {
 			x:          e.X,
 			y:          e.Y,
 			g:          e.G,
-			receivedAt: t.clock.Now(),
+			receivedAt: time.Now(),
 		})
 	}
 }
@@ -159,7 +152,7 @@ func (t *Trigger) show() {
 		t.hideTimer = nil
 	}
 	if fadeDur >= 0 {
-		t.hideTimer = t.clock.AfterFunc(fadeDur, t.publishHide)
+		t.hideTimer = time.AfterFunc(fadeDur, t.publishHide)
 	}
 	t.mu.Unlock()
 
@@ -168,7 +161,7 @@ func (t *Trigger) show() {
 		t.bus.Publish(events.VizTriggerEvent{
 			Visible:   true,
 			Class:     defaultClass,
-			Timestamp: t.clock.Now().Format(time.RFC3339Nano),
+			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})
 	}
 }
@@ -187,21 +180,21 @@ func (t *Trigger) pushRing(ev bufferedEvent) {
 
 func (t *Trigger) drainLoop() {
 	defer t.wg.Done()
-	ticker := t.clock.NewTicker(drainTickMs * time.Millisecond)
+	ticker := time.NewTicker(drainTickMs * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-t.stopCh:
 			return
-		case <-ticker.Chan():
+		case <-ticker.C:
 			t.drainReady()
 		}
 	}
 }
 
 func (t *Trigger) drainReady() {
-	now := t.clock.Now()
+	now := time.Now()
 	t.mu.Lock()
 	delayDur := t.delayDur
 	for t.ringLen > 0 {
