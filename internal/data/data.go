@@ -108,11 +108,19 @@ type ExperimentConfig struct {
 	Decay  float64 `json:"decay_s" toml:"decay_s" doc:"Decay time (s)" minimum:"0.05" maximum:"2" multipleOf:"0.01" default:"0.3"`
 }
 
+type PlumbBobConfig struct {
+	VizBase
+	ForceThresholds
+	BobDistance   float64 `json:"bob_distance" toml:"bob_distance" doc:"Bob distance from pivot (m)" minimum:"0.04" maximum:"0.13" multipleOf:"0.01" default:"0.10"`
+	DampingRatio  float64 `json:"damping_ratio" toml:"damping_ratio" doc:"Damping ratio (0=free, 1=critical)" minimum:"0.05" maximum:"0.5" multipleOf:"0.01" default:"0.15"`
+}
+
 type PinQuakeConfig struct {
 	BLE        BLEConfig        `json:"ble" toml:"ble"`
 	Waveform   WaveformConfig   `json:"waveform" toml:"waveform"`
 	Crosshair  CrosshairConfig  `json:"crosshair" toml:"crosshair"`
 	Experiment ExperimentConfig `json:"experiment" toml:"experiment"`
+	PlumbBob   PlumbBobConfig   `json:"plumb_bob" toml:"plumb_bob"`
 	AutoLock   AutoLockConfig   `json:"auto_lock" toml:"auto_lock"`
 	Display    DisplayConfig    `json:"display" toml:"display"`
 	Sensor     map[string]any   `json:"sensor,omitempty" toml:"sensor,omitempty"`
@@ -143,6 +151,12 @@ func DefaultConfig() PinQuakeConfig {
 			VizBase:         VizBase{Enabled: true, Width: 400, Height: 400},
 			ForceThresholds: ForceThresholds{ForceYellowG: 0.03, ForceRedG: 0.10},
 			Decay:           0.3,
+		},
+		PlumbBob: PlumbBobConfig{
+			VizBase:         VizBase{Enabled: true, Width: 400, Height: 400},
+			ForceThresholds: ForceThresholds{ForceYellowG: 0.03, ForceRedG: 0.10},
+			BobDistance:     0.10,
+			DampingRatio:    0.15,
 		},
 		AutoLock: AutoLockConfig{
 			SpreadWindow:    5,

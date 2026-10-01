@@ -183,6 +183,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/plumb_bob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API config plumb bob */
+        get: operations["get-api-config-plumb-bob"];
+        /** Put API config plumb bob */
+        put: operations["put-api-config-plumb-bob"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/sensor/WT901": {
         parameters: {
             query?: never;
@@ -561,10 +579,60 @@ export interface components {
             crosshair: components["schemas"]["CrosshairConfig"];
             display: components["schemas"]["DisplayConfig"];
             experiment: components["schemas"]["ExperimentConfig"];
+            plumb_bob: components["schemas"]["PlumbBobConfig"];
             sensor?: {
                 [key: string]: unknown;
             };
             waveform: components["schemas"]["WaveformConfig"];
+        };
+        PlumbBobConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlumbBobConfig.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: double
+             * @description Bob distance from pivot (m)
+             * @default 0.1
+             */
+            bob_distance: number;
+            /**
+             * Format: double
+             * @description Damping ratio (0=free, 1=critical)
+             * @default 0.15
+             */
+            damping_ratio: number;
+            /**
+             * @description Enable visualization
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Format: double
+             * @description Red threshold (g)
+             * @default 0.1
+             */
+            force_red_g: number;
+            /**
+             * Format: double
+             * @description Yellow threshold (g)
+             * @default 0.03
+             */
+            force_yellow_g: number;
+            /**
+             * Format: int64
+             * @description Canvas height (px)
+             * @default 1080
+             */
+            height: number;
+            /**
+             * Format: int64
+             * @description Canvas width (px)
+             * @default 608
+             */
+            width: number;
         };
         VizTriggerEvent: {
             class: string;
@@ -1162,6 +1230,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExperimentConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-config-plumb-bob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlumbBobConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-api-config-plumb-bob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlumbBobConfig"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlumbBobConfig"];
                 };
             };
             /** @description Error */
