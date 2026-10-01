@@ -34,8 +34,11 @@ type Trigger struct {
 	fadeDur  time.Duration
 	delayDur time.Duration
 
+	// visible is written under mu (so show/hide events publish in order)
+	// and read lock-free by IsVisible.
 	visible   atomic.Bool
 	hideTimer *time.Timer
+	hideGen   uint64 // bumped whenever the pending hide is re-armed or cancelled
 
 	ring    [ringSize]bufferedEvent
 	ringW   int
@@ -66,6 +69,12 @@ func (t *Trigger) Start() {
 
 	t.wg.Add(1)
 	go t.drainLoop()
+
+	t.mu.Lock()
+	if t.fadeDur < 0 {
+		t.setVisible(true)
+	}
+	t.mu.Unlock()
 }
 
 func (t *Trigger) Stop() {
@@ -76,9 +85,7 @@ func (t *Trigger) Stop() {
 	t.wg.Wait()
 
 	t.mu.Lock()
-	if t.hideTimer != nil {
-		t.hideTimer.Stop()
-	}
+	t.cancelHide()
 	t.mu.Unlock()
 }
 
@@ -87,28 +94,25 @@ func (t *Trigger) IsVisible() bool {
 }
 
 func (t *Trigger) SetConfig(cfg TriggerConfig) {
+	fadeDur := time.Duration(cfg.FadeS * float64(time.Second))
+
 	t.mu.Lock()
 	t.triggerG = cfg.TriggerG
-	t.fadeDur = time.Duration(cfg.FadeS * float64(time.Second))
 	t.delayDur = time.Duration(cfg.DelayMs) * time.Millisecond
 
-	if t.hideTimer != nil {
-		t.hideTimer.Stop()
-		t.hideTimer = nil
+	// Only a fade change restarts the countdown; tweaking other settings
+	// while the viz is up must not extend it.
+	if fadeDur != t.fadeDur {
+		t.fadeDur = fadeDur
+		if t.visible.Load() {
+			t.armHide()
+		}
 	}
-	if t.fadeDur >= 0 && t.visible.Load() {
-		t.hideTimer = time.AfterFunc(t.fadeDur, t.publishHide)
+	// Always-visible means visible now, not just "never hide once shown".
+	if fadeDur < 0 {
+		t.setVisible(true)
 	}
 	t.mu.Unlock()
-}
-
-func (t *Trigger) publishHide() {
-	t.visible.Store(false)
-	t.bus.Publish(events.VizTriggerEvent{
-		Visible:   false,
-		Class:     defaultClass,
-		Timestamp: time.Now().Format(time.RFC3339Nano),
-	})
 }
 
 func (t *Trigger) onOrientation(e events.OrientationEvent) {
@@ -142,28 +146,57 @@ func (t *Trigger) onOrientation(e events.OrientationEvent) {
 	}
 }
 
+// show makes the viz visible and restarts the fade countdown.
 func (t *Trigger) show() {
 	t.mu.Lock()
-	fadeDur := t.fadeDur
-	wasVisible := t.visible.Load()
+	defer t.mu.Unlock()
+	t.armHide()
+	t.setVisible(true)
+}
 
+// armHide replaces any pending hide with one fadeDur from now, or none when
+// always visible. Caller holds mu.
+func (t *Trigger) armHide() {
+	t.cancelHide()
+	if t.fadeDur < 0 {
+		return
+	}
+	gen := t.hideGen
+	t.hideTimer = time.AfterFunc(t.fadeDur, func() { t.expire(gen) })
+}
+
+// cancelHide drops the pending hide. Bumping hideGen also neutralizes a
+// timer whose callback already started and is waiting on mu. Caller holds mu.
+func (t *Trigger) cancelHide() {
+	t.hideGen++
 	if t.hideTimer != nil {
 		t.hideTimer.Stop()
 		t.hideTimer = nil
 	}
-	if fadeDur >= 0 {
-		t.hideTimer = time.AfterFunc(fadeDur, t.publishHide)
-	}
-	t.mu.Unlock()
+}
 
-	if !wasVisible {
-		t.visible.Store(true)
-		t.bus.Publish(events.VizTriggerEvent{
-			Visible:   true,
-			Class:     defaultClass,
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-		})
+func (t *Trigger) expire(gen uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if gen != t.hideGen {
+		return
 	}
+	t.hideTimer = nil
+	t.setVisible(false)
+}
+
+// setVisible publishes on change only. Caller holds mu; Bus.Publish never
+// blocks, and publishing under mu keeps show/hide events in order.
+func (t *Trigger) setVisible(v bool) {
+	if t.visible.Load() == v {
+		return
+	}
+	t.visible.Store(v)
+	t.bus.Publish(events.VizTriggerEvent{
+		Visible:   v,
+		Class:     defaultClass,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	})
 }
 
 func (t *Trigger) pushRing(ev bufferedEvent) {

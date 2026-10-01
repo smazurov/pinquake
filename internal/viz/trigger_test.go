@@ -181,8 +181,6 @@ func TestFadeNegativeOneAlwaysVisible(t *testing.T) {
 		ch := subChan[events.VizTriggerEvent](bus)
 
 		bus.Publish(events.OrientationEvent{X: 0.05, Y: 0.0})
-		expectVizEvent(t, ch, true)
-
 		advance(10 * time.Second)
 		if !tr.IsVisible() {
 			t.Error("should still be visible with fadeS=-1")
@@ -191,17 +189,49 @@ func TestFadeNegativeOneAlwaysVisible(t *testing.T) {
 	})
 }
 
+func TestAlwaysVisibleShowsOnStart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.New()
+		ch := subChan[events.VizTriggerEvent](bus)
+		tr := NewTrigger(bus, TriggerConfig{TriggerG: 0.02, FadeS: -1})
+		tr.Start()
+		t.Cleanup(func() {
+			tr.Stop()
+			bus.Close()
+		})
+
+		expectVizEvent(t, ch, true)
+		if !tr.IsVisible() {
+			t.Error("always-visible should be visible before any trigger")
+		}
+	})
+}
+
 func TestSetConfigFromAlwaysVisibleHides(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tr, bus := newTestTrigger(t, TriggerConfig{TriggerG: 0.02, FadeS: -1})
 		ch := subChan[events.VizTriggerEvent](bus)
 
-		bus.Publish(events.OrientationEvent{X: 0.05, Y: 0.0})
-		expectVizEvent(t, ch, true)
+		tr.SetConfig(TriggerConfig{TriggerG: 0.02, FadeS: 5.0})
+		advance(5 * time.Second)
+		expectVizEvent(t, ch, false)
+	})
+}
+
+func TestSetConfigBackToAlwaysVisibleShows(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tr, bus := newTestTrigger(t, TriggerConfig{TriggerG: 0.02, FadeS: -1})
+		ch := subChan[events.VizTriggerEvent](bus)
 
 		tr.SetConfig(TriggerConfig{TriggerG: 0.02, FadeS: 5.0})
 		advance(5 * time.Second)
 		expectVizEvent(t, ch, false)
+
+		tr.SetConfig(TriggerConfig{TriggerG: 0.02, FadeS: -1})
+		expectVizEvent(t, ch, true)
+		if !tr.IsVisible() {
+			t.Error("switching back to always-visible should show the viz")
+		}
 	})
 }
 
@@ -219,6 +249,22 @@ func TestSetConfigToAlwaysVisibleCancelsHideTimer(t *testing.T) {
 		if !tr.IsVisible() {
 			t.Error("should remain visible after switching to always-visible")
 		}
+	})
+}
+
+func TestSetConfigKeepsFadeDeadlineWhenFadeUnchanged(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tr, bus := newTestTrigger(t, TriggerConfig{TriggerG: 0.02, FadeS: 5.0})
+		ch := subChan[events.VizTriggerEvent](bus)
+
+		bus.Publish(events.OrientationEvent{X: 0.05, Y: 0.0})
+		expectVizEvent(t, ch, true)
+
+		advance(3 * time.Second)
+		tr.SetConfig(TriggerConfig{TriggerG: 0.5, DelayMs: 50, FadeS: 5.0})
+
+		advance(2 * time.Second) // 5s since the trigger
+		expectVizEvent(t, ch, false)
 	})
 }
 
