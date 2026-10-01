@@ -129,50 +129,53 @@ func applyWT901Config(s Sensor, cfgAny any) error {
 		return fmt.Errorf("expected *WT901Config, got %T", cfgAny)
 	}
 
-	w.ioMu.Lock()
-	defer w.ioMu.Unlock()
-
-	if err := w.unlock(); err != nil {
-		return fmt.Errorf("unlock: %w", err)
-	}
-
-	type regWrite struct {
-		name string
-		addr byte
-		lo   byte
-	}
-
-	var writes []regWrite
-
-	if v, ok := outputRateRegMap[cfg.OutputRateHz]; ok {
-		writes = append(writes, regWrite{"RRATE", 0x03, v})
-	}
-	if v, ok := accelRangeRegMap[cfg.AccelRangeG]; ok {
-		writes = append(writes, regWrite{"ACCRANGE", 0x21, v})
-	}
-	if v, ok := bandwidthRegMap[cfg.BandwidthHz]; ok {
-		writes = append(writes, regWrite{"BANDWIDTH", 0x1F, v})
-	}
-
-	axis6Lo := byte(0x00)
-	if cfg.SixAxis {
-		axis6Lo = 0x01
-	}
-	writes = append(writes, regWrite{"AXIS6", 0x24, axis6Lo})
-
-	if cfg.AccelFilter >= 0 && cfg.AccelFilter <= 15 {
-		writes = append(writes, regWrite{"ACCFILT", 0x2A, byte(cfg.AccelFilter)})
-	}
-
-	for _, wr := range writes {
-		if err := w.writeRegister(wr.addr, wr.lo, 0x00); err != nil {
-			return fmt.Errorf("write %s: %w", wr.name, err)
+	err := w.transact(func() error {
+		if err := w.unlock(); err != nil {
+			return fmt.Errorf("unlock: %w", err)
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
 
-	if err := w.save(); err != nil {
-		return fmt.Errorf("save: %w", err)
+		type regWrite struct {
+			name string
+			addr byte
+			lo   byte
+		}
+
+		var writes []regWrite
+
+		if v, ok := outputRateRegMap[cfg.OutputRateHz]; ok {
+			writes = append(writes, regWrite{"RRATE", 0x03, v})
+		}
+		if v, ok := accelRangeRegMap[cfg.AccelRangeG]; ok {
+			writes = append(writes, regWrite{"ACCRANGE", 0x21, v})
+		}
+		if v, ok := bandwidthRegMap[cfg.BandwidthHz]; ok {
+			writes = append(writes, regWrite{"BANDWIDTH", 0x1F, v})
+		}
+
+		axis6Lo := byte(0x00)
+		if cfg.SixAxis {
+			axis6Lo = 0x01
+		}
+		writes = append(writes, regWrite{"AXIS6", 0x24, axis6Lo})
+
+		if cfg.AccelFilter >= 0 && cfg.AccelFilter <= 15 {
+			writes = append(writes, regWrite{"ACCFILT", 0x2A, byte(cfg.AccelFilter)})
+		}
+
+		for _, wr := range writes {
+			if err := w.writeRegister(wr.addr, wr.lo, 0x00); err != nil {
+				return fmt.Errorf("write %s: %w", wr.name, err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		if err := w.save(); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	slog.Info("WT901 config applied",

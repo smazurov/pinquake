@@ -3,7 +3,6 @@ package sensors
 import (
 	"encoding/binary"
 	"fmt"
-	"sync"
 	"time"
 
 	"tinygo.org/x/bluetooth"
@@ -21,18 +20,53 @@ var (
 	wt901WriteParsedUUID   = mustParseUUID(wt901WriteCharUUID)
 )
 
+// charWriter is the write characteristic (bluetooth.DeviceCharacteristic).
+type charWriter interface {
+	WriteWithoutResponse(p []byte) (int, error)
+}
+
+// ioTimeout bounds one register transaction, including waiting for the
+// characteristic. tinygo's writes are blocking D-Bus calls with no timeout.
+const ioTimeout = 5 * time.Second
+
 type WT901 struct {
-	writeChar bluetooth.DeviceCharacteristic
+	writeChar charWriter
 	respCh    chan []byte
 
-	// ioMu serializes register transactions (unlock → write/read → response).
-	// Config apply and battery polling run concurrently right after connect;
-	// interleaved, they steal each other's responses from respCh.
-	ioMu           sync.Mutex
+	// ioSem (one slot) serializes register transactions (unlock →
+	// write/read → response). Config apply and battery polling run
+	// concurrently after connect; interleaved, they would steal each
+	// other's responses from respCh.
+	ioSem          chan struct{}
 	lastCentavolts uint16
 }
 
-func NewWT901() Sensor { return &WT901{} }
+func NewWT901() Sensor { return &WT901{ioSem: make(chan struct{}, 1)} }
+
+// transact runs fn with exclusive use of the characteristic, returning an
+// error if that takes longer than ioTimeout. fn keeps the characteristic
+// until it actually returns, so a timed-out transaction never interleaves
+// with the next one; later callers fail fast instead of blocking.
+func (w *WT901) transact(fn func() error) error {
+	timeout := time.NewTimer(ioTimeout)
+	defer timeout.Stop()
+	select {
+	case w.ioSem <- struct{}{}:
+	case <-timeout.C:
+		return fmt.Errorf("register I/O busy for %s", ioTimeout)
+	}
+	done := make(chan error, 1)
+	go func() {
+		defer func() { <-w.ioSem }()
+		done <- fn()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-timeout.C:
+		return fmt.Errorf("register I/O timed out after %s", ioTimeout)
+	}
+}
 
 func (w *WT901) Name() string { return "WT901" }
 
@@ -88,43 +122,50 @@ func (w *WT901) Connect(device *bluetooth.Device, onOrientation func([]byte)) er
 }
 
 func (w *WT901) ReadBattery() (*BatteryState, error) {
-	w.ioMu.Lock()
-	defer w.ioMu.Unlock()
-	if err := w.unlock(); err != nil {
+	var st *BatteryState
+	err := w.transact(func() error {
+		if err := w.unlock(); err != nil {
+			return err
+		}
+		data, err := w.readRegister(0x64)
+		if err != nil {
+			return fmt.Errorf("battery voltage: %w", err)
+		}
+		centavolts := binary.LittleEndian.Uint16(data[0:2])
+
+		var charging bool
+		if w.lastCentavolts != 0 {
+			charging = centavolts > w.lastCentavolts+10
+		}
+		w.lastCentavolts = centavolts
+
+		st = &BatteryState{
+			Percent:  batteryPercent(centavolts),
+			Volts:    float32(centavolts) / 100.0,
+			Charging: charging,
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	data, err := w.readRegister(0x64)
-	if err != nil {
-		return nil, fmt.Errorf("battery voltage: %w", err)
-	}
-	centavolts := binary.LittleEndian.Uint16(data[0:2])
-
-	var charging bool
-	if w.lastCentavolts == 0 {
-		charging = false
-	} else {
-		charging = centavolts > w.lastCentavolts+10
-	}
-	w.lastCentavolts = centavolts
-
-	return &BatteryState{
-		Percent:  batteryPercent(centavolts),
-		Volts:    float32(centavolts) / 100.0,
-		Charging: charging,
-	}, nil
+	return st, nil
 }
 
 func (w *WT901) ReadTemperature() (float32, error) {
-	w.ioMu.Lock()
-	defer w.ioMu.Unlock()
-	if err := w.unlock(); err != nil {
-		return 0, err
-	}
-	data, err := w.readRegister(0x40)
-	if err != nil {
-		return 0, fmt.Errorf("temperature: %w", err)
-	}
-	return float32(int16(binary.LittleEndian.Uint16(data[0:2]))) / 100.0, nil
+	var temp float32
+	err := w.transact(func() error {
+		if err := w.unlock(); err != nil {
+			return err
+		}
+		data, err := w.readRegister(0x40)
+		if err != nil {
+			return fmt.Errorf("temperature: %w", err)
+		}
+		temp = float32(int16(binary.LittleEndian.Uint16(data[0:2]))) / 100.0
+		return nil
+	})
+	return temp, err
 }
 
 func (w *WT901) Calibrate() error { return ErrUnsupported }
@@ -152,21 +193,25 @@ func (w *WT901) save() error {
 
 // ReadBatteryBlock reads registers 0x5C-0x6B for debug purposes.
 func (w *WT901) ReadBatteryBlock() (map[string]uint16, error) {
-	w.ioMu.Lock()
-	defer w.ioMu.Unlock()
-	if err := w.unlock(); err != nil {
-		return nil, err
-	}
 	result := map[string]uint16{}
-	for _, base := range []byte{0x5C, 0x64} {
-		data, err := w.readRegister(base)
-		if err != nil {
-			continue
+	err := w.transact(func() error {
+		if err := w.unlock(); err != nil {
+			return err
 		}
-		for i := 0; i < 8; i++ {
-			key := fmt.Sprintf("0x%02X", int(base)+i)
-			result[key] = binary.LittleEndian.Uint16(data[i*2 : i*2+2])
+		for _, base := range []byte{0x5C, 0x64} {
+			data, err := w.readRegister(base)
+			if err != nil {
+				continue
+			}
+			for i := 0; i < 8; i++ {
+				key := fmt.Sprintf("0x%02X", int(base)+i)
+				result[key] = binary.LittleEndian.Uint16(data[i*2 : i*2+2])
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }
