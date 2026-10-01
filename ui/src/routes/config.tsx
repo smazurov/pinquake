@@ -6,11 +6,12 @@ type PinQuakeConfig = components["schemas"]["PinQuakeConfig"];
 type WaveformConfig = components["schemas"]["WaveformConfig"];
 type CrosshairConfig = components["schemas"]["CrosshairConfig"];
 type ExperimentConfig = components["schemas"]["ExperimentConfig"];
+type PlumbBobConfig = components["schemas"]["PlumbBobConfig"];
 type DisplayConfig = components["schemas"]["DisplayConfig"];
 type AutoLockConfig = components["schemas"]["AutoLockConfig"];
 import type { SSEStatus } from "../lib/api";
 import type { FieldMeta } from "../lib/schema";
-import { extractAllFieldMeta, extractSectionSchema, extractNamedSchema } from "../lib/schema";
+import { extractAllFieldMeta, extractSectionSchema, extractNamedSchema, type JSONSchemaObject } from "../lib/schema";
 import { getErrorMessage } from "../lib/errors";
 import { useAutoSave } from "../lib/useAutoSave";
 import SimpleNavbar from "../components/SimpleNavbar";
@@ -24,7 +25,7 @@ import SchemaForm from "../components/SchemaForm";
 import { InputField } from "../components/InputField";
 import experimentRegistry from "../lib/experimentRegistry";
 
-type PreviewTab = "off" | "canvas" | "crosshair" | "experiment";
+type PreviewTab = "off" | "canvas" | "crosshair" | "experiment" | "plumbbob";
 
 
 const TAB_LABELS: Record<PreviewTab, string> = {
@@ -32,6 +33,7 @@ const TAB_LABELS: Record<PreviewTab, string> = {
   canvas: "Canvas",
   crosshair: "Crosshair",
   experiment: "Experiment",
+  plumbbob: "Plumb Bob",
 };
 
 type WT901Config = components["schemas"]["WT901Config"];
@@ -40,11 +42,41 @@ interface SectionSchema {
   waveform: FieldMeta[];
   crosshair: FieldMeta[];
   experiment: FieldMeta[];
+  plumbBob: FieldMeta[];
   display: FieldMeta[];
   autoLock: FieldMeta[];
 }
 
 const HIDDEN_FIELDS = new Set(["enabled", "width", "height"]);
+
+function vizFields(schema: JSONSchemaObject | null): FieldMeta[] {
+  return schema ? extractAllFieldMeta(schema).filter((f) => !HIDDEN_FIELDS.has(f.key)) : [];
+}
+
+function parseSectionSchemas(schema: Record<string, unknown>): { sections: SectionSchema; sensorFields: FieldMeta[] | null } | null {
+  const waveformSchema = extractSectionSchema(schema, "waveform");
+  const crosshairSchema = extractSectionSchema(schema, "crosshair");
+  const experimentSchema = extractSectionSchema(schema, "experiment");
+  const plumbBobSchema = extractSectionSchema(schema, "plumb_bob");
+  const displaySchema = extractSectionSchema(schema, "display");
+  const autoLockSchema = extractSectionSchema(schema, "auto_lock");
+  if (!waveformSchema || !crosshairSchema || !experimentSchema || !displaySchema) return null;
+
+  const sensorSchema = extractNamedSchema(schema, "WT901Config");
+  return {
+    sections: {
+      waveform: vizFields(waveformSchema),
+      crosshair: vizFields(crosshairSchema),
+      experiment: vizFields(experimentSchema),
+      plumbBob: vizFields(plumbBobSchema),
+      display: extractAllFieldMeta(displaySchema, ["swap_xy"]),
+      autoLock: vizFields(autoLockSchema),
+    },
+    sensorFields: sensorSchema
+      ? extractAllFieldMeta(sensorSchema).filter((f) => f.key !== "$schema")
+      : null,
+  };
+}
 
 function SaveStatus({ status, error }: Readonly<{ status: string; error: string | null }>) {
   if (status === "saving") {
@@ -86,6 +118,11 @@ const saveCrosshair = async (val: CrosshairConfig) => {
 
 const saveExperiment = async (val: ExperimentConfig) => {
   const { error } = await api.PUT("/api/config/experiment", { body: val });
+  return { error };
+};
+
+const savePlumbBob = async (val: PlumbBobConfig) => {
+  const { error } = await api.PUT("/api/config/plumb_bob", { body: val });
   return { error };
 };
 
@@ -143,10 +180,11 @@ export default function ConfigRoute() {
   const waveformSave = useAutoSave(config?.waveform ?? null, saveWaveform);
   const crosshairSave = useAutoSave(config?.crosshair ?? null, saveCrosshair);
   const experimentSave = useAutoSave(config?.experiment ?? null, saveExperiment);
+  const plumbBobSave = useAutoSave(config?.plumb_bob ?? null, savePlumbBob);
   const displaySave = useAutoSave(config?.display ?? null, saveDisplay);
   const autoLockSave = useAutoSave(config?.auto_lock ?? null, saveAutoLock);
   const sensorSave = useAutoSave(sensorConfig, saveSensorConfig);
-  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, experimentSave, displaySave, autoLockSave, sensorSave);
+  const { status: saveStatus, error: saveError } = combineSaveStatus(waveformSave, crosshairSave, experimentSave, plumbBobSave, displaySave, autoLockSave, sensorSave);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -159,29 +197,13 @@ export default function ConfigRoute() {
     fetch("/openapi.json")
       .then((r) => r.json() as Promise<Record<string, unknown>>)
       .then((schema) => {
-        const waveformSchema = extractSectionSchema(schema, "waveform");
-        const crosshairSchema = extractSectionSchema(schema, "crosshair");
-        const experimentSchema = extractSectionSchema(schema, "experiment");
-        const displaySchema = extractSectionSchema(schema, "display");
-        const autoLockSchema = extractSectionSchema(schema, "auto_lock");
-        if (!waveformSchema || !crosshairSchema || !experimentSchema || !displaySchema) {
-          setSchemaError("Schema missing waveform, crosshair, experiment, or display section");
+        const result = parseSectionSchemas(schema);
+        if (!result) {
+          setSchemaError("Schema missing required sections");
           return;
         }
-        setSectionSchema({
-          waveform: extractAllFieldMeta(waveformSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
-          crosshair: extractAllFieldMeta(crosshairSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
-          experiment: extractAllFieldMeta(experimentSchema).filter((f) => !HIDDEN_FIELDS.has(f.key)),
-          display: extractAllFieldMeta(displaySchema, ["swap_xy"]),
-          autoLock: autoLockSchema ? extractAllFieldMeta(autoLockSchema) : [],
-        });
-
-        const sensorSchema = extractNamedSchema(schema, "WT901Config");
-        if (sensorSchema) {
-          setSensorFields(
-            extractAllFieldMeta(sensorSchema).filter((f) => f.key !== "$schema"),
-          );
-        }
+        setSectionSchema(result.sections);
+        if (result.sensorFields) setSensorFields(result.sensorFields);
       })
       .catch((error: unknown) => {
         console.error("Failed to fetch OpenAPI schema:", error);
@@ -233,6 +255,16 @@ export default function ConfigRoute() {
     [],
   );
 
+  const updatePlumbBob = useCallback(
+    (key: string, value: unknown) => {
+      setConfig((prev) => {
+        if (!prev) return prev;
+        return { ...prev, plumb_bob: { ...prev.plumb_bob, [key]: value } };
+      });
+    },
+    [],
+  );
+
   const updateDisplay = useCallback(
     (key: string, value: unknown) => {
       setConfig((prev) => {
@@ -275,12 +307,13 @@ export default function ConfigRoute() {
     );
   }
 
-  const enabledVizzes = [
-    "off" as PreviewTab,
-    config.waveform.enabled && "canvas",
-    config.crosshair.enabled && "crosshair",
-    config.experiment.enabled && "experiment",
-  ].filter(Boolean) as PreviewTab[];
+  const vizTabs: [PreviewTab, boolean][] = [
+    ["canvas", config.waveform.enabled],
+    ["crosshair", config.crosshair.enabled],
+    ["experiment", config.experiment.enabled],
+    ["plumbbob", config.plumb_bob.enabled],
+  ];
+  const enabledVizzes: PreviewTab[] = ["off", ...vizTabs.filter(([, on]) => on).map(([t]) => t)];
 
   const activeTab = enabledVizzes.includes(previewTab) ? previewTab : enabledVizzes[0];
 
@@ -290,7 +323,8 @@ export default function ConfigRoute() {
     ? ""
     : `&show=${[...activeExperiments].join(",")}`;
   const experimentUrl = `${window.location.origin}/experiment?width=${config.experiment.width}&height=${config.experiment.height}${showParam}`;
-  const previewUrls: Record<string, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl };
+  const plumbBobUrl = `${window.location.origin}/plumbbob?width=${config.plumb_bob.width}&height=${config.plumb_bob.height}`;
+  const previewUrls: Record<string, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl, plumbbob: plumbBobUrl };
   const previewUrl = activeTab !== "off" ? previewUrls[activeTab] : null;
 
   return (
@@ -438,6 +472,34 @@ export default function ConfigRoute() {
                     fields={sectionSchema.experiment}
                     values={config.experiment as unknown as Record<string, unknown>}
                     onChange={updateExperiment}
+                  />
+                ) : (
+                  <p className="text-xs text-slate-500">Loading schema...</p>
+                )}
+              </Collapsible>
+            )}
+
+            {config.plumb_bob.enabled && (
+              <Collapsible id="plumbbob" title="Plumb Bob">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <InputField
+                    label="Width"
+                    type="number"
+                    value={config.plumb_bob.width}
+                    onChange={(e) => updatePlumbBob("width", Number(e.target.value))}
+                  />
+                  <InputField
+                    label="Height"
+                    type="number"
+                    value={config.plumb_bob.height}
+                    onChange={(e) => updatePlumbBob("height", Number(e.target.value))}
+                  />
+                </div>
+                {sectionSchema?.plumbBob ? (
+                  <SchemaForm
+                    fields={sectionSchema.plumbBob}
+                    values={config.plumb_bob as unknown as Record<string, unknown>}
+                    onChange={updatePlumbBob}
                   />
                 ) : (
                   <p className="text-xs text-slate-500">Loading schema...</p>

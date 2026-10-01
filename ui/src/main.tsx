@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import VizRoute from "./routes/viz";
 import CrosshairRoute from "./routes/crosshair";
 import ExperimentRoute from "./routes/experiment";
+import PlumbBobRoute from "./routes/plumbbob";
 import ConfigRoute from "./routes/config";
 
 const router = createBrowserRouter([
@@ -22,6 +23,10 @@ const router = createBrowserRouter([
   {
     path: "/experiment",
     element: <ExperimentRoute />,
+  },
+  {
+    path: "/plumbbob",
+    element: <PlumbBobRoute />,
   },
 ]);
 
