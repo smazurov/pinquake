@@ -102,6 +102,9 @@ func applyWT901Config(s Sensor, cfgAny any) error {
 		return fmt.Errorf("expected *WT901Config, got %T", cfgAny)
 	}
 
+	w.ioMu.Lock()
+	defer w.ioMu.Unlock()
+
 	if err := w.unlock(); err != nil {
 		return fmt.Errorf("unlock: %w", err)
 	}

@@ -3,6 +3,7 @@ package sensors
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"time"
 
 	"tinygo.org/x/bluetooth"
@@ -21,8 +22,13 @@ var (
 )
 
 type WT901 struct {
-	writeChar      bluetooth.DeviceCharacteristic
-	respCh         chan []byte
+	writeChar bluetooth.DeviceCharacteristic
+	respCh    chan []byte
+
+	// ioMu serializes register transactions (unlock → write/read → response).
+	// Config apply and battery polling run concurrently right after connect;
+	// interleaved, they steal each other's responses from respCh.
+	ioMu           sync.Mutex
 	lastCentavolts uint16
 }
 
@@ -82,6 +88,8 @@ func (w *WT901) Connect(device *bluetooth.Device, onOrientation func([]byte)) er
 }
 
 func (w *WT901) ReadBattery() (*BatteryState, error) {
+	w.ioMu.Lock()
+	defer w.ioMu.Unlock()
 	if err := w.unlock(); err != nil {
 		return nil, err
 	}
@@ -107,6 +115,8 @@ func (w *WT901) ReadBattery() (*BatteryState, error) {
 }
 
 func (w *WT901) ReadTemperature() (float32, error) {
+	w.ioMu.Lock()
+	defer w.ioMu.Unlock()
 	if err := w.unlock(); err != nil {
 		return 0, err
 	}
@@ -142,6 +152,8 @@ func (w *WT901) save() error {
 
 // ReadBatteryBlock reads registers 0x5C-0x6B for debug purposes.
 func (w *WT901) ReadBatteryBlock() (map[string]uint16, error) {
+	w.ioMu.Lock()
+	defer w.ioMu.Unlock()
 	if err := w.unlock(); err != nil {
 		return nil, err
 	}
