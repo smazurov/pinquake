@@ -18,6 +18,8 @@ import SimpleNavbar from "../components/SimpleNavbar";
 import Container from "../components/Container";
 import { Card } from "../components/Card";
 import BLEControl from "../components/BLEControl";
+import OBSControl from "../components/OBSControl";
+import type { OBSStatus } from "../lib/obs";
 import ConnectionBanner from "../components/ConnectionBanner";
 import Collapsible from "../components/Collapsible";
 import { ErrorAlert } from "../components/ErrorAlert";
@@ -176,6 +178,7 @@ export default function ConfigRoute() {
   const [connectedSensor, setConnectedSensor] = useState<string | null>(null);
   const [sensorConfig, setSensorConfig] = useState<WT901Config | null>(null);
   const [sensorFields, setSensorFields] = useState<FieldMeta[] | null>(null);
+  const [obsStatus, setOBSStatus] = useState<OBSStatus | null>(null);
 
   const waveformSave = useAutoSave(config?.waveform ?? null, saveWaveform);
   const crosshairSave = useAutoSave(config?.crosshair ?? null, saveCrosshair);
@@ -342,7 +345,10 @@ export default function ConfigRoute() {
             <BLEControl
               onSSEStatus={setSSEStatus}
               onSensorChange={handleSensorChange}
+              onOBSStatus={setOBSStatus}
             />
+
+            <OBSControl config={config.obs} status={obsStatus} />
 
             {connectedSensor && sensorConfig && sensorFields && (
               <Collapsible id="sensor" title="Sensor" defaultOpen={false}>

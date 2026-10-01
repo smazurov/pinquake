@@ -3,6 +3,7 @@ import { LinkIcon, LinkSlashIcon, NoSymbolIcon, BoltIcon, Battery0Icon, Battery5
 import { SSEClient, api } from "../lib/api";
 import type { SSEStatus } from "../lib/api";
 import type { components } from "../lib/api.generated";
+import type { OBSStatus } from "../lib/obs";
 
 type BLEScanResult = components["schemas"]["BLEScanResultEvent"];
 type LogEntry = components["schemas"]["LogEntry"];
@@ -73,7 +74,11 @@ function formatTime(timestamp: string): string {
   return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
-export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ onSSEStatus?: (status: SSEStatus) => void; onSensorChange?: (sensorName: string | null) => void }>) {
+export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }: Readonly<{
+  onSSEStatus?: (status: SSEStatus) => void;
+  onSensorChange?: (sensorName: string | null) => void;
+  onOBSStatus?: (status: OBSStatus) => void;
+}>) {
   const [bleState, setBleState] = useState<BLEState>("idle");
   const [scanResults, setScanResults] = useState<Map<string, BLEScanResult>>(
     new Map(),
@@ -94,6 +99,8 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
   useEffect(() => { onSSEStatusRef.current = onSSEStatus; }, [onSSEStatus]);
   const onSensorChangeRef = useRef(onSensorChange);
   useEffect(() => { onSensorChangeRef.current = onSensorChange; }, [onSensorChange]);
+  const onOBSStatusRef = useRef(onOBSStatus);
+  useEffect(() => { onOBSStatusRef.current = onOBSStatus; }, [onOBSStatus]);
   useEffect(() => {
     const client = new SSEClient({
       endpoint: "/api/events",
@@ -134,6 +141,9 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
     });
     client.on("log", (data) => {
       setLogEntries((prev) => [...prev, data].slice(-200));
+    });
+    client.on("obs-status", (data) => {
+      onOBSStatusRef.current?.(data);
     });
     client.on("frame-state", (data) => {
       setFrame({ enabled: data.enabled, state: data.state });
