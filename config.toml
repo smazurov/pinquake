@@ -21,7 +21,7 @@ width = 200
 
 [app.display]
 swap_xy = true
-delay_ms = 10
+delay_ms = 145
 trigger_g = 0.105
 fade_s = -1.0
 
@@ -32,6 +32,15 @@ force_red_g = 0.69
 force_yellow_g = 0.15
 height = 400
 width = 400
+
+[app.obs]
+connect = true
+password = ''
+scene = 'Scene 2'
+scene_uuid = '78e77091-594d-4ef3-a151-43bfc080c80b'
+server = 'localhost:4455'
+source = 'TestGroup'
+source_uuid = 'ea2a2926-cf65-4144-882a-9258f12d9f99'
 
 [app.plumb_bob]
 bob_distance = 0.1
