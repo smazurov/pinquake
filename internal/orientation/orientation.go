@@ -14,15 +14,15 @@
 //
 // # Pinball Machine Frame
 //
-//	        +Y (away from player / toward backbox)
-//	         ^
-//	         |
-//	  -X <---+---> +X (right, from player's POV)
-//	         |
-//	         v
-//	        -Y (toward player)
+//	      +Y (away from player / toward backbox)
+//	       ^
+//	       |
+//	-X <---+---> +X (right, from player's POV)
+//	       |
+//	       v
+//	      -Y (toward player)
 //
-//	  +Z = up (gravity opposes -Z)
+//	+Z = up (gravity opposes -Z)
 //
 // # Mounting Scenarios
 //

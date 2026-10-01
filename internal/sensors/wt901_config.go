@@ -27,9 +27,18 @@ func (o OutputRate) Schema(_ huma.Registry) *huma.Schema {
 	}
 }
 
-func (o OutputRate) MarshalJSON() ([]byte, error)  { return json.Marshal(int(o)) }
-func (o *OutputRate) UnmarshalJSON(b []byte) error  { var v int; err := json.Unmarshal(b, &v); *o = OutputRate(v); return err }
-func (o *OutputRate) UnmarshalText(b []byte) error  { v, err := strconv.Atoi(string(b)); *o = OutputRate(v); return err }
+func (o OutputRate) MarshalJSON() ([]byte, error) { return json.Marshal(int(o)) }
+func (o *OutputRate) UnmarshalJSON(b []byte) error {
+	var v int
+	err := json.Unmarshal(b, &v)
+	*o = OutputRate(v)
+	return err
+}
+func (o *OutputRate) UnmarshalText(b []byte) error {
+	v, err := strconv.Atoi(string(b))
+	*o = OutputRate(v)
+	return err
+}
 
 type AccelRange int
 
@@ -40,9 +49,18 @@ func (a AccelRange) Schema(_ huma.Registry) *huma.Schema {
 	}
 }
 
-func (a AccelRange) MarshalJSON() ([]byte, error)  { return json.Marshal(int(a)) }
-func (a *AccelRange) UnmarshalJSON(b []byte) error  { var v int; err := json.Unmarshal(b, &v); *a = AccelRange(v); return err }
-func (a *AccelRange) UnmarshalText(b []byte) error  { v, err := strconv.Atoi(string(b)); *a = AccelRange(v); return err }
+func (a AccelRange) MarshalJSON() ([]byte, error) { return json.Marshal(int(a)) }
+func (a *AccelRange) UnmarshalJSON(b []byte) error {
+	var v int
+	err := json.Unmarshal(b, &v)
+	*a = AccelRange(v)
+	return err
+}
+func (a *AccelRange) UnmarshalText(b []byte) error {
+	v, err := strconv.Atoi(string(b))
+	*a = AccelRange(v)
+	return err
+}
 
 type Bandwidth int
 
@@ -53,9 +71,18 @@ func (bw Bandwidth) Schema(_ huma.Registry) *huma.Schema {
 	}
 }
 
-func (bw Bandwidth) MarshalJSON() ([]byte, error)  { return json.Marshal(int(bw)) }
-func (bw *Bandwidth) UnmarshalJSON(b []byte) error  { var v int; err := json.Unmarshal(b, &v); *bw = Bandwidth(v); return err }
-func (bw *Bandwidth) UnmarshalText(b []byte) error  { v, err := strconv.Atoi(string(b)); *bw = Bandwidth(v); return err }
+func (bw Bandwidth) MarshalJSON() ([]byte, error) { return json.Marshal(int(bw)) }
+func (bw *Bandwidth) UnmarshalJSON(b []byte) error {
+	var v int
+	err := json.Unmarshal(b, &v)
+	*bw = Bandwidth(v)
+	return err
+}
+func (bw *Bandwidth) UnmarshalText(b []byte) error {
+	v, err := strconv.Atoi(string(b))
+	*bw = Bandwidth(v)
+	return err
+}
 
 type WT901Config struct {
 	OutputRateHz OutputRate `json:"output_rate_hz" toml:"output_rate_hz" doc:"Output rate (Hz)" default:"50"`

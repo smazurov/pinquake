@@ -43,7 +43,7 @@ func (p *PinLevel) Connect(device *bluetooth.Device, onOrientation func([]byte))
 	return nil
 }
 
-func (p *PinLevel) ReadBattery() (*BatteryState, error)  { return nil, ErrUnsupported }
-func (p *PinLevel) ReadTemperature() (float32, error)     { return 0, ErrUnsupported }
-func (p *PinLevel) Calibrate() error                      { return ErrUnsupported }
-func (p *PinLevel) Close()                                {}
+func (p *PinLevel) ReadBattery() (*BatteryState, error) { return nil, ErrUnsupported }
+func (p *PinLevel) ReadTemperature() (float32, error)   { return 0, ErrUnsupported }
+func (p *PinLevel) Calibrate() error                    { return ErrUnsupported }
+func (p *PinLevel) Close()                              {}

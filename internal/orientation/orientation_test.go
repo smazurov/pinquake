@@ -98,8 +98,8 @@ func assertOrthonormal(t *testing.T, m Mat3) {
 
 func TestBuildLockRotation_SingleAxis(t *testing.T) {
 	tests := []struct {
-		name         string
-		ax, ay, az   float32
+		name       string
+		ax, ay, az float32
 	}{
 		{"gravity +X", 1, 0, 0},
 		{"gravity -X", -1, 0, 0},
@@ -217,28 +217,28 @@ func TestBuildLockRotation_AxisMapping(t *testing.T) {
 		name       string
 		ax, ay, az float32
 		// Unit nudge along each non-gravity sensor axis and expected canonical output.
-		nudge1     [3]float32
-		wantGx1    float64
-		wantGy1    float64
-		nudge2     [3]float32
-		wantGx2    float64
-		wantGy2    float64
+		nudge1  [3]float32
+		wantGx1 float64
+		wantGy1 float64
+		nudge2  [3]float32
+		wantGx2 float64
+		wantGy2 float64
 	}{
 		{
 			name: "gravity +X: sensorY→gx, sensorZ→gy",
-			ax: 1, ay: 0, az: 0,
+			ax:   1, ay: 0, az: 0,
 			nudge1: [3]float32{0, 1, 0}, wantGx1: 1, wantGy1: 0,
 			nudge2: [3]float32{0, 0, 1}, wantGx2: 0, wantGy2: 1,
 		},
 		{
 			name: "gravity +Z: sensorX→gx, sensorY→gy",
-			ax: 0, ay: 0, az: 1,
+			ax:   0, ay: 0, az: 1,
 			nudge1: [3]float32{1, 0, 0}, wantGx1: 1, wantGy1: 0,
 			nudge2: [3]float32{0, 1, 0}, wantGx2: 0, wantGy2: 1,
 		},
 		{
 			name: "gravity +Y: sensorZ→gx, sensorX→gy",
-			ax: 0, ay: 1, az: 0,
+			ax:   0, ay: 1, az: 0,
 			nudge1: [3]float32{0, 0, 1}, wantGx1: 1, wantGy1: 0,
 			nudge2: [3]float32{1, 0, 0}, wantGx2: 0, wantGy2: 1,
 		},
