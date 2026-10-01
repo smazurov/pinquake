@@ -15,6 +15,7 @@ import (
 	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 	"github.com/smazurov/pinquake/internal/framelock"
+	"github.com/smazurov/pinquake/internal/obs"
 	"github.com/smazurov/pinquake/internal/sensors"
 	"github.com/smazurov/pinquake/internal/viz"
 	"github.com/smazurov/pinquake/ui"
@@ -29,16 +30,22 @@ type Server struct {
 	eventBus   *events.Bus
 	scanner    *ble.Scanner
 	trigger    *viz.Trigger
+	overlay    *viz.Overlay
+	obs        *obs.Controller
 	configPath string
 	configMu   sync.Mutex
 	eventLogMu sync.Mutex
 	eventLog   []events.LogEntry
+	lastOBS    obs.Status // for logging transitions; OBS goroutine only
+	lastOBSErr string
 }
 
 type Options struct {
 	EventBus   *events.Bus
 	Scanner    *ble.Scanner
 	ConfigPath string
+	// OBSDial opens obs-websocket sessions; nil means obs.Dial.
+	OBSDial obs.Dialer
 }
 
 func NewServer(opts *Options) *Server {
@@ -66,7 +73,6 @@ func NewServer(opts *Options) *Server {
 		TriggerG: appCfg.Display.TriggerG,
 		FadeS:    float64(appCfg.Display.FadeS),
 	})
-	trigger.Start()
 
 	server := &Server{
 		api:        api,
@@ -74,8 +80,21 @@ func NewServer(opts *Options) *Server {
 		eventBus:   opts.EventBus,
 		scanner:    opts.Scanner,
 		trigger:    trigger,
+		overlay:    viz.NewOverlay(opts.EventBus),
 		configPath: opts.ConfigPath,
+		lastOBS:    obs.Status{State: obs.StateOff},
 	}
+
+	dial := opts.OBSDial
+	if dial == nil {
+		dial = obs.Dial
+	}
+	server.obs = obs.NewController(obs.Options{
+		Dial:     dial,
+		OnStatus: server.onOBSStatus,
+		OnTarget: server.saveRenamedOBSTarget,
+	})
+	server.obs.Start()
 
 	opts.Scanner.OnConnect(func(sensorName string) {
 		server.configMu.Lock()
@@ -98,6 +117,8 @@ func NewServer(opts *Options) *Server {
 	})
 
 	opts.EventBus.Subscribe(func(e events.VizTriggerEvent) {
+		server.overlay.SetTrigger(e.Visible)
+		server.obs.SetVisible(e.Visible)
 		if e.Visible {
 			server.log("info", "Viz triggered")
 		} else {
@@ -128,6 +149,10 @@ func NewServer(opts *Options) *Server {
 			server.log("warn", msg)
 		}
 	})
+
+	// Start after subscribing so an always-visible trigger's initial show
+	// reaches the overlay and OBS.
+	trigger.Start()
 
 	server.registerRoutes()
 
@@ -167,6 +192,16 @@ func (s *Server) AutoConnect() {
 	if err := s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName); err != nil {
 		s.log("error", fmt.Sprintf("Saved BLE device ignored: %v", err))
 	}
+}
+
+// AutoConnectOBS reconnects to OBS if it was connected when last saved.
+func (s *Server) AutoConnectOBS() {
+	cfg, _ := s.loadAppConfig()
+	if !cfg.OBS.Connect {
+		return
+	}
+	s.obs.SetTarget(obsTarget(cfg.OBS))
+	go s.obs.Connect(cfg.OBS.Server, cfg.OBS.Password) // don't hold up startup on a slow dial
 }
 
 func (s *Server) log(level, message string) {
@@ -234,6 +269,7 @@ func (s *Server) HumaAPI() huma.API {
 
 func (s *Server) Stop(ctx context.Context) error {
 	s.trigger.Stop()
+	s.obs.Stop()
 	if s.httpServer != nil {
 		return s.httpServer.Shutdown(ctx)
 	}
@@ -244,4 +280,5 @@ func (s *Server) registerRoutes() {
 	s.registerConfigRoutes()
 	s.registerSSERoutes()
 	s.registerBLERoutes()
+	s.registerOBSRoutes()
 }

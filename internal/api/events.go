@@ -25,8 +25,9 @@ func (s *Server) registerSSERoutes() {
 		"battery":        events.BatteryEvent{},
 		"heartbeat":      events.HeartbeatEvent{},
 		"log":            events.LogEntry{},
-		"viz-trigger":    events.VizTriggerEvent{},
+		"viz-trigger":    events.OverlayVisibilityEvent{},
 		"frame-state":    events.FrameStateEvent{},
+		"obs-status":     events.OBSStatusEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
 		eventCh := make(chan any, 64)
 
@@ -36,8 +37,9 @@ func (s *Server) registerSSERoutes() {
 			events.SubscribeToChannel[events.ConfigChangedEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.BatteryEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.LogEntry](s.eventBus, eventCh),
-			events.SubscribeToChannel[events.VizTriggerEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.OverlayVisibilityEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.FrameStateEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.OBSStatusEvent](s.eventBus, eventCh),
 		}
 		defer func() {
 			for _, unsub := range unsubscribers {
@@ -45,11 +47,14 @@ func (s *Server) registerSSERoutes() {
 			}
 		}()
 
-		if err := send.Data(events.VizTriggerEvent{
-			Visible:   s.trigger.IsVisible(),
-			Class:     "impact",
+		if err := send.Data(events.OverlayVisibilityEvent{
+			Visible:   s.overlay.Visible(),
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		}); err != nil {
+			return
+		}
+
+		if err := send.Data(obsStatusEvent(s.obs.Status())); err != nil {
 			return
 		}
 

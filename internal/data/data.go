@@ -119,6 +119,21 @@ type BLELinkConfig struct {
 	BackoffMaxS     float64 `json:"backoff_max_s" toml:"backoff_max_s" doc:"Longest retry pause (s)" minimum:"1" maximum:"600" default:"30"`
 }
 
+// OBSConfig connects to obs-websocket so the trigger can show and hide an
+// OBS scene item instead of the overlays hiding themselves. Written only by
+// the /api/obs actions, never by a whole-section PUT, so a stale config page
+// can't flip Connect or clobber the target.
+type OBSConfig struct {
+	Server   string `json:"server" toml:"server" doc:"obs-websocket address (host:port)" default:"localhost:4455"`
+	Password string `json:"password" toml:"password" doc:"obs-websocket password, stored in plaintext"`
+	Connect  bool   `json:"connect" toml:"connect" doc:"Keep connected to OBS (set by Connect/Disconnect)"`
+	// Scene holds the target: a scene or a group, OBS treats both alike.
+	Scene      string `json:"scene" toml:"scene" doc:"Scene or group holding the target"`
+	SceneUUID  string `json:"scene_uuid" toml:"scene_uuid"`
+	Source     string `json:"source" toml:"source" doc:"Source or group the trigger shows and hides"`
+	SourceUUID string `json:"source_uuid" toml:"source_uuid"`
+}
+
 type ExperimentConfig struct {
 	VizBase
 	ForceThresholds
@@ -142,6 +157,7 @@ type PinQuakeConfig struct {
 	AutoLock   AutoLockConfig   `json:"auto_lock" toml:"auto_lock"`
 	Frame      FrameConfig      `json:"frame" toml:"frame"`
 	Display    DisplayConfig    `json:"display" toml:"display"`
+	OBS        OBSConfig        `json:"obs" toml:"obs"`
 	Sensor     map[string]any   `json:"sensor,omitempty" toml:"sensor,omitempty"`
 }
 
@@ -194,6 +210,7 @@ func DefaultConfig() PinQuakeConfig {
 			TriggerG: 0.02,
 			FadeS:    5.0,
 		},
+		OBS: OBSConfig{Server: "localhost:4455"},
 	}
 }
 

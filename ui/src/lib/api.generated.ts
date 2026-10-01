@@ -275,6 +275,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/obs/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API obs connect */
+        post: operations["post-api-obs-connect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/obs/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API obs disconnect */
+        post: operations["post-api-obs-disconnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/obs/scenes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API obs scenes */
+        get: operations["get-api-obs-scenes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/obs/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API obs status */
+        get: operations["get-api-obs-status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/obs/target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API obs target */
+        put: operations["put-api-obs-target"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -648,9 +733,85 @@ export interface components {
         HeartbeatEvent: {
             timestamp: string;
         };
+        Item: {
+            enabled: boolean;
+            /** Format: int64 */
+            id: number;
+            is_group: boolean;
+            /** @description OBS input kind; empty for groups and nested scenes */
+            kind: string;
+            name: string;
+            uuid: string;
+        };
         LogEntry: {
             level: string;
             message: string;
+            timestamp: string;
+        };
+        OBSConfig: {
+            /** @description Keep connected to OBS (set by Connect/Disconnect) */
+            connect: boolean;
+            /** @description obs-websocket password, stored in plaintext */
+            password: string;
+            /** @description Scene or group holding the target */
+            scene: string;
+            scene_uuid: string;
+            /**
+             * @description obs-websocket address (host:port)
+             * @default localhost:4455
+             */
+            server: string;
+            /** @description Source or group the trigger shows and hides */
+            source: string;
+            source_uuid: string;
+        };
+        OBSConnectRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OBSConnectRequestBody.json
+             */
+            readonly $schema?: string;
+            /** @description obs-websocket password; leave empty if authentication is off */
+            password?: string;
+            /**
+             * @description obs-websocket address (host:port)
+             * @example localhost:4455
+             */
+            server: string;
+        };
+        OBSScenesBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OBSScenesBody.json
+             */
+            readonly $schema?: string;
+            /** @description Scenes and groups, top of the OBS list first */
+            scenes: components["schemas"]["Scene"][] | null;
+        };
+        OBSStatusEvent: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OBSStatusEvent.json
+             */
+            readonly $schema?: string;
+            /** @description Why the last attempt failed */
+            error?: string;
+            obs_version?: string;
+            /**
+             * Format: double
+             * @description Seconds until the next attempt
+             */
+            retry_in_s?: number;
+            server?: string;
+            /** @enum {string} */
+            state: "off" | "connecting" | "waiting" | "connected" | "active";
+            /** @description Scene › Source being driven */
+            target?: string;
+            /** @description Target not found in OBS */
+            target_missing?: boolean;
             timestamp: string;
         };
         OKBody: {
@@ -661,6 +822,10 @@ export interface components {
              */
             readonly $schema?: string;
             ok: boolean;
+        };
+        OverlayVisibilityEvent: {
+            timestamp: string;
+            visible: boolean;
         };
         PinQuakeConfig: {
             /**
@@ -676,6 +841,7 @@ export interface components {
             display: components["schemas"]["DisplayConfig"];
             experiment: components["schemas"]["ExperimentConfig"];
             frame: components["schemas"]["FrameConfig"];
+            obs: components["schemas"]["OBSConfig"];
             plumb_bob: components["schemas"]["PlumbBobConfig"];
             sensor?: {
                 [key: string]: unknown;
@@ -731,10 +897,26 @@ export interface components {
              */
             width: number;
         };
-        VizTriggerEvent: {
-            class: string;
-            timestamp: string;
-            visible: boolean;
+        Scene: {
+            is_group: boolean;
+            /** @description Top of the OBS source list first */
+            items: components["schemas"]["Item"][] | null;
+            name: string;
+            uuid: string;
+        };
+        Target: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Target.json
+             */
+            readonly $schema?: string;
+            /** @description Scene or group holding the target */
+            scene: string;
+            scene_uuid: string;
+            /** @description Source or group to show and hide */
+            source: string;
+            source_uuid: string;
         };
         WT901Config: {
             /**
@@ -1670,6 +1852,17 @@ export interface operations {
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
+                        data: components["schemas"]["OBSStatusEvent"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "obs-status";
+                        /** @description The event ID. */
+                        id?: number;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    } | {
                         data: components["schemas"]["DelayedOrientationEvent"];
                         /**
                          * @description The event name.
@@ -1681,7 +1874,7 @@ export interface operations {
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
-                        data: components["schemas"]["VizTriggerEvent"];
+                        data: components["schemas"]["OverlayVisibilityEvent"];
                         /**
                          * @description The event name.
                          * @constant
@@ -1692,6 +1885,159 @@ export interface operations {
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     })[];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-obs-connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OBSConnectRequestBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OBSStatusEvent"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-obs-disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OBSStatusEvent"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-obs-scenes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OBSScenesBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-obs-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OBSStatusEvent"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-api-obs-target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Target"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OBSStatusEvent"];
                 };
             };
             /** @description Error */

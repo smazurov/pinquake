@@ -69,6 +69,7 @@ func main() {
 		close(bleDone)
 	}()
 	server.AutoConnect()
+	server.AutoConnectOBS()
 
 	go func() {
 		logger.Info("Starting PinQuake", "port", opts.Port)

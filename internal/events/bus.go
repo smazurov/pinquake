@@ -53,6 +53,10 @@ func (b *Bus) Subscribe(handler any) func() {
 		return subscribe(b, h)
 	case func(FrameStateEvent):
 		return subscribe(b, h)
+	case func(OverlayVisibilityEvent):
+		return subscribe(b, h)
+	case func(OBSStatusEvent):
+		return subscribe(b, h)
 	default:
 		return func() {}
 	}

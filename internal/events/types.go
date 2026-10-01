@@ -11,6 +11,8 @@ const (
 	TypeVizTrigger
 	TypeDelayedOrientation
 	TypeFrameState
+	TypeOverlayVisibility
+	TypeOBSStatus
 )
 
 type Event interface {
@@ -122,3 +124,27 @@ type FrameStateEvent struct {
 }
 
 func (e FrameStateEvent) Type() uint32 { return TypeFrameState }
+
+// OverlayVisibilityEvent tells the browser overlays whether to draw. They
+// follow the trigger, except while OBS is driving a target: then they stay up
+// and OBS shows and hides them.
+type OverlayVisibilityEvent struct {
+	Visible   bool   `json:"visible"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (e OverlayVisibilityEvent) Type() uint32 { return TypeOverlayVisibility }
+
+// OBSStatusEvent reports the obs-websocket session.
+type OBSStatusEvent struct {
+	State         string  `json:"state" enum:"off,connecting,waiting,connected,active"`
+	Server        string  `json:"server,omitempty"`
+	OBSVersion    string  `json:"obs_version,omitempty"`
+	Error         string  `json:"error,omitempty" doc:"Why the last attempt failed"`
+	RetryInS      float64 `json:"retry_in_s,omitempty" doc:"Seconds until the next attempt"`
+	Target        string  `json:"target,omitempty" doc:"Scene › Source being driven"`
+	TargetMissing bool    `json:"target_missing,omitempty" doc:"Target not found in OBS"`
+	Timestamp     string  `json:"timestamp"`
+}
+
+func (e OBSStatusEvent) Type() uint32 { return TypeOBSStatus }

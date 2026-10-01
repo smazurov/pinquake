@@ -48,6 +48,7 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
     auto_lock: { spread_window: 5, spread_threshold: 0.005, relock_threshold: 0.01 },
     frame: { auto_lock: true },
     display: { delay_ms: 0, trigger_g: 0.02, fade_s: 5, swap_xy: false },
+    obs: { server: "localhost:4455", password: "", connect: false, scene: "", scene_uuid: "", source: "", source_uuid: "" },
   };
   return { ...defaults, ...partial };
 }
