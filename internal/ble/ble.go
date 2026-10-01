@@ -42,6 +42,10 @@ type Scanner struct {
 
 	locker         *framelock.Locker
 	lastFrameState framelock.Status // last published, for dedup
+	publishFrame   func(events.FrameStateEvent)
+	// frameSem (one slot) makes "read status + publish" atomic, so events
+	// leave in the order the state changed and the last one is current.
+	frameSem chan struct{}
 
 	ready chan struct{} // closed when adapter.Enable() succeeds
 }
@@ -59,6 +63,8 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 		}),
 		ready: make(chan struct{}),
 	}
+	s.publishFrame = func(e events.FrameStateEvent) { s.eventBus.Publish(e) }
+	s.frameSem = make(chan struct{}, 1)
 	radio := &bluezRadio{adapter: s.adapter, logger: logger}
 	s.sup = NewSupervisor(radio, DefaultSupervisorConfig(), SupervisorHooks{
 		OnStatus: s.onLinkStatus,
@@ -160,6 +166,9 @@ func (s *Scanner) ConfigureFrameLock(cfg framelock.Config) {
 // publishFrameState publishes a FrameStateEvent when the lock state changed
 // or a new lock was applied. Must not be called with s.mu held.
 func (s *Scanner) publishFrameState(lock *framelock.Lock) {
+	s.frameSem <- struct{}{}
+	defer func() { <-s.frameSem }()
+
 	s.mu.Lock()
 	st := s.locker.Status()
 	changed := st.Enabled != s.lastFrameState.Enabled || st.State != s.lastFrameState.State
@@ -180,7 +189,7 @@ func (s *Scanner) publishFrameState(lock *framelock.Lock) {
 		ev.Stdev = lock.Stdev
 		ev.Drift = lock.Drift
 	}
-	s.eventBus.Publish(ev)
+	s.publishFrame(ev)
 }
 
 func (s *Scanner) SetSwapXY(swap bool) {

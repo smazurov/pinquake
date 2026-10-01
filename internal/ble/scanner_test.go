@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/smazurov/pinquake/internal/events"
 	"github.com/smazurov/pinquake/internal/framelock"
 	"github.com/smazurov/pinquake/internal/sensors"
 	"tinygo.org/x/bluetooth"
@@ -110,6 +111,43 @@ func TestSetupHonoursCancellation(t *testing.T) {
 		stream(handler, lockWindow+time.Second)
 		if st := s.FrameStatus(); st.State == framelock.StateLocked {
 			t.Error("late sensor's notifications drove the frame lock")
+		}
+	})
+}
+
+func TestFrameStateEventsCannotArriveStale(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestScanner()
+		hold := make(chan struct{})
+		var mu sync.Mutex
+		var got []events.FrameStateEvent
+		first := true
+		s.publishFrame = func(e events.FrameStateEvent) {
+			mu.Lock()
+			block := first
+			first = false
+			mu.Unlock()
+			if block {
+				<-hold // first publisher stalls after reading its state
+			}
+			mu.Lock()
+			got = append(got, e)
+			mu.Unlock()
+		}
+
+		go s.FrameAction("disable") // reads "disabled", then stalls in publish
+		synctest.Wait()
+		go s.FrameAction("enable") // a newer state is published meanwhile
+		synctest.Wait()
+		close(hold)
+		synctest.Wait()
+
+		mu.Lock()
+		defer mu.Unlock()
+		last := got[len(got)-1]
+		if st := s.FrameStatus(); last.Enabled != st.Enabled || last.State != string(st.State) {
+			t.Fatalf("last event enabled=%v state=%s, but scanner is enabled=%v state=%s",
+				last.Enabled, last.State, st.Enabled, st.State)
 		}
 	})
 }
