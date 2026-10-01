@@ -3,3 +3,5 @@ tmp/
 ui/dist/
 ui/node_modules/
 openapi.json
+# written by `pnpm gen:api` (go run with cwd=ui uses default config.toml)
+ui/config.toml
