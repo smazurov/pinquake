@@ -94,6 +94,7 @@ func main() {
 		if err := server.Stop(shutdownCtx); err != nil {
 			logger.Error("Error stopping server", "error", err)
 		}
+		eventBus.Close()
 	}()
 
 	select {
