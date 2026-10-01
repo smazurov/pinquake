@@ -270,7 +270,13 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: double
-             * @description Stdev threshold (g) to trigger lock
+             * @description Re-lock when settled gravity moves this far (g) from the locked frame
+             * @default 0.01
+             */
+            relock_threshold: number;
+            /**
+             * Format: double
+             * @description Max per-axis stdev (g) over the window to count as stable
              * @default 0.005
              */
             spread_threshold: number;
@@ -541,6 +547,13 @@ export interface components {
              */
             action: "enable" | "disable" | "trigger";
         };
+        FrameConfig: {
+            /**
+             * @description Auto-lock the reference frame on connect
+             * @default true
+             */
+            auto_lock: boolean;
+        };
         FrameStateBody: {
             /**
              * Format: uri
@@ -548,7 +561,39 @@ export interface components {
              * @example https://example.com/schemas/FrameStateBody.json
              */
             readonly $schema?: string;
-            locked: boolean;
+            /** @description Auto-lock enabled */
+            enabled: boolean;
+            /** @description When the current frame was locked */
+            locked_at?: string;
+            /** @enum {string} */
+            state: "unlocked" | "settling" | "locked";
+            /**
+             * Format: float
+             * @description Max per-axis stdev over buffered samples (g)
+             */
+            stdev: number;
+        };
+        FrameStateEvent: {
+            /**
+             * Format: float
+             * @description Distance from the previous gravity reference (g)
+             */
+            drift?: number;
+            /** @description Auto-lock enabled */
+            enabled: boolean;
+            /**
+             * @description Why a new lock was applied
+             * @enum {string}
+             */
+            reason?: "stable" | "drift" | "trigger" | "settle-timeout";
+            /** @enum {string} */
+            state: "unlocked" | "settling" | "locked";
+            /**
+             * Format: float
+             * @description Max per-axis stdev over the window (g)
+             */
+            stdev: number;
+            timestamp: string;
         };
         HeartbeatEvent: {
             timestamp: string;
@@ -579,6 +624,7 @@ export interface components {
             crosshair: components["schemas"]["CrosshairConfig"];
             display: components["schemas"]["DisplayConfig"];
             experiment: components["schemas"]["ExperimentConfig"];
+            frame: components["schemas"]["FrameConfig"];
             plumb_bob: components["schemas"]["PlumbBobConfig"];
             sensor?: {
                 [key: string]: unknown;
@@ -1473,6 +1519,17 @@ export interface operations {
                          * @constant
                          */
                         event: "config-changed";
+                        /** @description The event ID. */
+                        id?: number;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    } | {
+                        data: components["schemas"]["FrameStateEvent"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "frame-state";
                         /** @description The event ID. */
                         id?: number;
                         /** @description The retry time in milliseconds. */

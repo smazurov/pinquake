@@ -30,6 +30,8 @@ func (b *Bus) Publish(ev Event) {
 		event.Publish(b.dispatcher, e)
 	case DelayedOrientationEvent:
 		event.Publish(b.dispatcher, e)
+	case FrameStateEvent:
+		event.Publish(b.dispatcher, e)
 	}
 }
 
@@ -50,6 +52,8 @@ func (b *Bus) Subscribe(handler any) func() {
 	case func(VizTriggerEvent):
 		return event.Subscribe(b.dispatcher, h)
 	case func(DelayedOrientationEvent):
+		return event.Subscribe(b.dispatcher, h)
+	case func(FrameStateEvent):
 		return event.Subscribe(b.dispatcher, h)
 	default:
 		return func() {}

@@ -144,6 +144,7 @@ func (s *Scanner) Disconnect() error {
 	s.mu.Unlock()
 
 	s.publishStatus("disconnected", "", "user", "")
+	s.publishFrameState(nil)
 	s.logger.Info("Disconnected from BLE device")
 	return err
 }
@@ -162,5 +163,6 @@ func (s *Scanner) resetConnectionState() {
 	s.deviceName = ""
 	s.sensor = nil
 	s.state = StateIdle
-	s.resetAutoLock()
+	// Keep auto-lock enabled; the next connection re-locks on its own.
+	s.locker.ResetFrame()
 }

@@ -44,7 +44,8 @@ function mergeDefaults(partial: Partial<PinQuakeConfig>): PinQuakeConfig {
       bob_distance: 0.10,
       damping_ratio: 0.15,
     },
-    auto_lock: { spread_window: 5, spread_threshold: 0.005 },
+    auto_lock: { spread_window: 5, spread_threshold: 0.005, relock_threshold: 0.01 },
+    frame: { auto_lock: true },
     display: { delay_ms: 0, trigger_g: 0.02, fade_s: 5, swap_xy: false },
   };
   return { ...defaults, ...partial };

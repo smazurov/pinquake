@@ -6,6 +6,7 @@ import type { components } from "../lib/api.generated";
 
 type BLEScanResult = components["schemas"]["BLEScanResultEvent"];
 type LogEntry = components["schemas"]["LogEntry"];
+type FrameState = Pick<components["schemas"]["FrameStateBody"], "enabled" | "state">;
 import { ErrorAlert } from "./ErrorAlert";
 import Collapsible from "./Collapsible";
 
@@ -29,6 +30,18 @@ function StatusDot({ state, scanning, reason, flashKey }: Readonly<{ state: BLES
       className={`inline-block h-2 w-2 rounded-full ${color} ${flashKey ? "animate-[dot-flash_0.4s_ease-out]" : ""}`}
     />
   );
+}
+
+function LockIcon({ frame }: Readonly<{ frame: FrameState }>) {
+  if (!frame.enabled) return <LockOpenIcon className={ICON_CLS} />;
+  if (frame.state === "locked") return <LockClosedIcon className={ICON_CLS} />;
+  return <LockClosedIcon className={`${ICON_CLS} animate-pulse`} />;
+}
+
+function lockButtonStyle(frame: FrameState): { cls: string; title: string } {
+  if (!frame.enabled) return { cls: "text-slate-400 hover:text-slate-300", title: "Enable auto-lock" };
+  if (frame.state === "locked") return { cls: "text-green-400 hover:text-green-300", title: "Frame locked. Click to disable auto-lock" };
+  return { cls: "text-amber-400 hover:text-amber-300", title: "Waiting for a stable reading to lock. Click to disable auto-lock" };
 }
 
 function formatStateLabel(state: BLEState, scanning: boolean, disconnecting: boolean, reason: string | null): string {
@@ -69,7 +82,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
   const [error, setError] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [frameLocked, setFrameLocked] = useState(false);
+  const [frame, setFrame] = useState<FrameState>({ enabled: false, state: "unlocked" });
   const [battery, setBattery] = useState<{ percent: number; volts: number; charging: boolean } | null>(null);
   const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -100,7 +113,6 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
       }
       if (data.status === "idle" || data.status === "disconnected") {
         setDisconnecting(false);
-        setFrameLocked(false);
         setDeviceName(null);
         setBattery(null);
         onSensorChangeRef.current?.(null);
@@ -111,7 +123,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
       }
       if (data.status === "connected") {
         onSensorChangeRef.current?.(data.sensor_name ?? null);
-        void api.GET(FRAME_ENDPOINT).then(({ data }) => { if (data) setFrameLocked(data.locked); });
+        void api.GET(FRAME_ENDPOINT).then(({ data }) => { if (data) setFrame({ enabled: data.enabled, state: data.state }); });
       }
     });
     client.on("battery", (data) => {
@@ -122,9 +134,10 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
     });
     client.on("log", (data) => {
       setLogEntries((prev) => [...prev, data].slice(-200));
-      if (data.message.startsWith("Auto-locked") || data.message === "Frame force-locked") {
-        setLockSpinKey((n) => n + 1);
-      }
+    });
+    client.on("frame-state", (data) => {
+      setFrame({ enabled: data.enabled, state: data.state });
+      if (data.reason) setLockSpinKey((n) => n + 1);
     });
     client.connect();
     mainSSE.current = client;
@@ -182,11 +195,13 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
   );
 
   const handleToggleFrameLock = useCallback(async () => {
-    const action = frameLocked ? "disable" : "enable";
+    const action = frame.enabled ? "disable" : "enable";
     const { data, error: err } = await api.POST(FRAME_ENDPOINT, { body: { action } });
     if (err) { setError(err.detail ?? "Frame lock failed"); return; }
-    setFrameLocked(data?.locked ?? !frameLocked);
-  }, [frameLocked]);
+    setFrame({ enabled: data.enabled, state: data.state });
+  }, [frame.enabled]);
+
+  const lockStyle = lockButtonStyle(frame);
 
   const handleDisconnect = useCallback(async () => {
     setError(null);
@@ -259,20 +274,16 @@ export default function BLEControl({ onSSEStatus, onSensorChange }: Readonly<{ o
             )}
             <button
               onClick={(e) => { e.stopPropagation(); void handleToggleFrameLock(); }}
-              className={`transition-colors ${
-                frameLocked
-                  ? "text-green-400 hover:text-green-300"
-                  : "text-slate-400 hover:text-slate-300"
-              }`}
-              title={frameLocked ? "Disable auto-lock" : "Enable auto-lock"}
+              className={`transition-colors ${lockStyle.cls}`}
+              title={lockStyle.title}
             >
-              {frameLocked ? <LockClosedIcon className={ICON_CLS} /> : <LockOpenIcon className={ICON_CLS} />}
+              <LockIcon frame={frame} />
             </button>
-            {frameLocked && (
+            {frame.enabled && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setLockSpinKey((n) => n + 1);
+                  // Spins when the lock lands (frame-state event, ~0.5s).
                   void api.POST(FRAME_ENDPOINT, { body: { action: "trigger" } });
                 }}
                 className="text-slate-400 hover:text-slate-300 transition-colors"

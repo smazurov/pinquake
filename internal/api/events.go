@@ -26,6 +26,7 @@ func (s *Server) registerSSERoutes() {
 		"heartbeat":      events.HeartbeatEvent{},
 		"log":            events.LogEntry{},
 		"viz-trigger":    events.VizTriggerEvent{},
+		"frame-state":    events.FrameStateEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
 		eventCh := make(chan any, 64)
 
@@ -36,6 +37,7 @@ func (s *Server) registerSSERoutes() {
 			events.SubscribeToChannel[events.BatteryEvent](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.LogEntry](s.eventBus, eventCh),
 			events.SubscribeToChannel[events.VizTriggerEvent](s.eventBus, eventCh),
+			events.SubscribeToChannel[events.FrameStateEvent](s.eventBus, eventCh),
 		}
 		defer func() {
 			for _, unsub := range unsubscribers {
@@ -56,6 +58,16 @@ func (s *Server) registerSSERoutes() {
 			DeviceName: s.scanner.GetDeviceName(),
 			SensorName: s.scanner.GetSensorName(),
 			Timestamp:  time.Now().Format(time.RFC3339Nano),
+		}); err != nil {
+			return
+		}
+
+		fs := s.scanner.FrameStatus()
+		if err := send.Data(events.FrameStateEvent{
+			Enabled:   fs.Enabled,
+			State:     string(fs.State),
+			Stdev:     fs.Stdev,
+			Timestamp: time.Now().Format(time.RFC3339Nano),
 		}); err != nil {
 			return
 		}

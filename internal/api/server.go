@@ -14,6 +14,7 @@ import (
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
+	"github.com/smazurov/pinquake/internal/framelock"
 	"github.com/smazurov/pinquake/internal/sensors"
 	"github.com/smazurov/pinquake/internal/viz"
 	"github.com/smazurov/pinquake/ui"
@@ -104,6 +105,8 @@ func NewServer(opts *Options) *Server {
 		}
 	})
 
+	opts.EventBus.Subscribe(server.logFrameLock)
+
 	opts.EventBus.Subscribe(func(e events.BLEStatusEvent) {
 		switch e.Status {
 		case "connecting":
@@ -186,15 +189,38 @@ func (s *Server) log(level, message string) {
 
 func (s *Server) syncConfig(cfg data.PinQuakeConfig) {
 	s.scanner.SetSwapXY(cfg.Display.SwapXY)
-	s.scanner.SetAutoLockParams(
-		time.Duration(cfg.AutoLock.SpreadWindow*float64(time.Second)),
-		float32(cfg.AutoLock.SpreadThreshold),
-	)
+	s.scanner.ConfigureFrameLock(frameLockConfig(cfg))
 	s.trigger.SetConfig(viz.TriggerConfig{
 		DelayMs:  cfg.Display.DelayMs,
 		TriggerG: cfg.Display.TriggerG,
 		FadeS:    float64(cfg.Display.FadeS),
 	})
+}
+
+func frameLockConfig(cfg data.PinQuakeConfig) framelock.Config {
+	return framelock.Config{
+		Enabled:         cfg.Frame.AutoLock,
+		Window:          time.Duration(cfg.AutoLock.SpreadWindow * float64(time.Second)),
+		Threshold:       float32(cfg.AutoLock.SpreadThreshold),
+		RelockThreshold: float32(cfg.AutoLock.RelockThreshold),
+	}
+}
+
+func (s *Server) logFrameLock(e events.FrameStateEvent) {
+	switch framelock.Reason(e.Reason) {
+	case framelock.ReasonStable:
+		s.log("info", fmt.Sprintf("Frame locked: stable (stdev %.4fg)", e.Stdev))
+	case framelock.ReasonDrift:
+		s.log("info", fmt.Sprintf("Frame re-locked: settled %.4fg away", e.Drift))
+	case framelock.ReasonTrigger:
+		s.log("info", "Frame force-locked")
+	case framelock.ReasonSettleTimeout:
+		cfg, _ := s.loadAppConfig()
+		lc := frameLockConfig(cfg)
+		s.log("warn", fmt.Sprintf(
+			"Frame force-locked: not stable within %s (stdev %.4fg, threshold %.4fg); will re-lock once stable",
+			lc.SettleTimeout(), e.Stdev, lc.Threshold))
+	}
 }
 
 func (s *Server) HumaAPI() huma.API {

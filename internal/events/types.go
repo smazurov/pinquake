@@ -10,6 +10,7 @@ const (
 	TypeLogEntry
 	TypeVizTrigger
 	TypeDelayedOrientation
+	TypeFrameState
 )
 
 type Event interface {
@@ -108,3 +109,16 @@ type DelayedOrientationEvent struct {
 }
 
 func (e DelayedOrientationEvent) Type() uint32 { return TypeDelayedOrientation }
+
+// FrameStateEvent reports reference-frame lock state. Reason is set only when
+// the event announces a new lock.
+type FrameStateEvent struct {
+	Enabled   bool    `json:"enabled" doc:"Auto-lock enabled"`
+	State     string  `json:"state" enum:"unlocked,settling,locked"`
+	Reason    string  `json:"reason,omitempty" enum:"stable,drift,trigger,settle-timeout" doc:"Why a new lock was applied"`
+	Stdev     float32 `json:"stdev" doc:"Max per-axis stdev over the window (g)"`
+	Drift     float32 `json:"drift,omitempty" doc:"Distance from the previous gravity reference (g)"`
+	Timestamp string  `json:"timestamp"`
+}
+
+func (e FrameStateEvent) Type() uint32 { return TypeFrameState }

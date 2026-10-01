@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/smazurov/pinquake/internal/events"
-	"github.com/smazurov/pinquake/internal/orientation"
+	"github.com/smazurov/pinquake/internal/framelock"
 	"github.com/smazurov/pinquake/internal/sensors"
 	"tinygo.org/x/bluetooth"
 )
@@ -21,11 +21,6 @@ const (
 	StateConnecting State = "connecting"
 	StateConnected  State = "connected"
 )
-
-type accelSample struct {
-	mag float32
-	t   time.Time
-}
 
 type Scanner struct {
 	adapter  *bluetooth.Adapter
@@ -42,34 +37,28 @@ type Scanner struct {
 	scanDone      chan struct{}
 	connCtx       context.Context
 	connCancel    context.CancelFunc
-	refFrame    *orientation.Orientation
-	refRotation orientation.Mat3
-	gravity     [3]float32
-	gMag        float32
-	pendingLock   bool
 	swapXY        bool
 	disconnecting bool
 	onConnect     func(sensorName string)
 
-	autoLockEnabled         bool
-	autoLockSpreadWindow    time.Duration
-	autoLockSpreadThreshold float32
-	autoLockSamples         []accelSample
-	lastRaw                 *orientation.Orientation
+	locker         *framelock.Locker
+	lastFrameState framelock.Status // last published, for dedup
 
 	ready chan struct{} // closed when adapter.Enable() succeeds
 }
 
-
 func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 	return &Scanner{
-		adapter:         bluetooth.DefaultAdapter,
-		eventBus:        eventBus,
-		logger:          logger,
-		state:           StateIdle,
-		autoLockSpreadWindow:    5 * time.Second,
-		autoLockSpreadThreshold: 0.005,
-		ready:           make(chan struct{}),
+		adapter:  bluetooth.DefaultAdapter,
+		eventBus: eventBus,
+		logger:   logger,
+		state:    StateIdle,
+		locker: framelock.New(framelock.Config{
+			Window:          5 * time.Second,
+			Threshold:       0.005,
+			RelockThreshold: 0.01,
+		}),
+		ready: make(chan struct{}),
 	}
 }
 
@@ -131,46 +120,63 @@ func (s *Scanner) Sensor() sensors.Sensor {
 	return s.sensor
 }
 
-
-// FrameAction performs a lock action and returns the resulting lock state.
+// FrameAction performs a lock action and returns the resulting status.
 // Valid actions: "enable", "disable", "trigger".
-func (s *Scanner) FrameAction(action string) bool {
+func (s *Scanner) FrameAction(action string) framelock.Status {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	switch action {
 	case "enable":
-		s.autoLockEnabled = true
-		s.pendingLock = true
-		s.autoLockSamples = s.autoLockSamples[:0]
+		s.locker.Enable()
 	case "disable":
-		s.resetAutoLock()
+		s.locker.Disable()
 	case "trigger":
-		s.pendingLock = true
+		s.locker.Trigger()
 	}
-	return s.autoLockEnabled
+	st := s.locker.Status()
+	s.mu.Unlock()
+	s.publishFrameState(nil)
+	return st
 }
 
-// resetAutoLock zeroes all auto-lock and reference frame fields. Caller must hold s.mu.
-func (s *Scanner) resetAutoLock() {
-	s.autoLockEnabled = false
-	s.refFrame = nil
-	s.gMag = 0
-	s.gravity = [3]float32{}
-	s.pendingLock = false
-	s.autoLockSamples = s.autoLockSamples[:0]
-}
-
-func (s *Scanner) IsFrameLocked() bool {
+func (s *Scanner) FrameStatus() framelock.Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.autoLockEnabled
+	return s.locker.Status()
 }
 
-func (s *Scanner) SetAutoLockParams(window time.Duration, threshold float32) {
+// ConfigureFrameLock applies auto-lock settings. Re-applying unchanged
+// settings does not disturb an existing lock.
+func (s *Scanner) ConfigureFrameLock(cfg framelock.Config) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.autoLockSpreadWindow = window
-	s.autoLockSpreadThreshold = threshold
+	s.locker.Configure(cfg)
+	s.mu.Unlock()
+	s.publishFrameState(nil)
+}
+
+// publishFrameState publishes a FrameStateEvent when the lock state changed
+// or a new lock was applied. Must not be called with s.mu held.
+func (s *Scanner) publishFrameState(lock *framelock.Lock) {
+	s.mu.Lock()
+	st := s.locker.Status()
+	changed := st.Enabled != s.lastFrameState.Enabled || st.State != s.lastFrameState.State
+	s.lastFrameState = st
+	s.mu.Unlock()
+
+	if !changed && lock == nil {
+		return
+	}
+	ev := events.FrameStateEvent{
+		Enabled:   st.Enabled,
+		State:     string(st.State),
+		Stdev:     st.Stdev,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	}
+	if lock != nil {
+		ev.Reason = string(lock.Reason)
+		ev.Stdev = lock.Stdev
+		ev.Drift = lock.Drift
+	}
+	s.eventBus.Publish(ev)
 }
 
 func (s *Scanner) SetSwapXY(swap bool) {
@@ -215,7 +221,13 @@ func (s *Scanner) ApplySensorConfig(entry sensors.SensorEntry, cfg any) error {
 	if sensor.Name() != entry.Name {
 		return nil
 	}
-	return entry.ApplyConfig(sensor, cfg)
+	err := entry.ApplyConfig(sensor, cfg)
+	// Samples from before the reconfiguration (rate/filter changes) are not
+	// representative; restart stability evaluation either way.
+	s.mu.Lock()
+	s.locker.DiscardSamples()
+	s.mu.Unlock()
+	return err
 }
 
 func errState(action string, state State) error {

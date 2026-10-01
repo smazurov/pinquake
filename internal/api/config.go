@@ -69,14 +69,17 @@ func registerSection[T any](s *Server, name string, extract func(*data.PinQuakeC
 	}, huma.OperationTags("config"))
 
 	huma.Put(s.api, path, func(_ context.Context, input *sectionRequest[T]) (*sectionResponse[T], error) {
+		// Hold configMu through sync so this can't apply a frame.auto_lock
+		// that a concurrent lock-button action is about to overwrite.
 		s.configMu.Lock()
 		err := data.SaveSection(s.configPath, name, input.Body)
-		s.configMu.Unlock()
 		if err != nil {
+			s.configMu.Unlock()
 			return nil, huma.Error500InternalServerError(fmt.Sprintf("failed to save config: %v", err))
 		}
 		cfg, _ := s.loadAppConfig()
 		s.syncConfig(cfg)
+		s.configMu.Unlock()
 		s.eventBus.Publish(events.ConfigChangedEvent{
 			Section:   name,
 			Timestamp: time.Now().Format(time.RFC3339Nano),

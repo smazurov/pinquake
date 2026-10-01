@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
 	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
+	"github.com/smazurov/pinquake/internal/framelock"
 )
 
 type ConnectRequest struct {
@@ -34,7 +36,18 @@ type FrameActionRequest struct {
 }
 
 type FrameStateBody struct {
-	Locked bool `json:"locked"`
+	Enabled  bool    `json:"enabled" doc:"Auto-lock enabled"`
+	State    string  `json:"state" enum:"unlocked,settling,locked"`
+	Stdev    float32 `json:"stdev" doc:"Max per-axis stdev over buffered samples (g)"`
+	LockedAt string  `json:"locked_at,omitempty" doc:"When the current frame was locked"`
+}
+
+func frameStateBody(st framelock.Status) FrameStateBody {
+	body := FrameStateBody{Enabled: st.Enabled, State: string(st.State), Stdev: st.Stdev}
+	if !st.LockedAt.IsZero() {
+		body.LockedAt = st.LockedAt.Format(time.RFC3339Nano)
+	}
+	return body
 }
 
 type FrameStateResponse struct {
@@ -99,20 +112,37 @@ func (s *Server) registerBLERoutes() {
 		logMessages := map[string]string{
 			"enable":  "Auto-lock enabled",
 			"disable": "Auto-lock disabled",
-			"trigger": "Frame force-locked",
+			"trigger": "Force-lock requested",
 		}
-		msg, ok := logMessages[input.Body.Action]
+		action := input.Body.Action
+		msg, ok := logMessages[action]
 		if !ok {
 			return nil, huma.Error422UnprocessableEntity("invalid action: must be enable, disable, or trigger")
 		}
-		locked := s.scanner.FrameAction(input.Body.Action)
+		// Hold configMu so a concurrent config PUT can't sync a stale
+		// frame.auto_lock between applying and persisting the action.
+		s.configMu.Lock()
+		st := s.scanner.FrameAction(action)
+		if action == "enable" || action == "disable" {
+			if err := s.saveFrameAutoLock(action == "enable"); err != nil {
+				slog.Error("Failed to save frame auto-lock", "error", err)
+			}
+		}
+		s.configMu.Unlock()
 		s.log("info", msg)
-		return &FrameStateResponse{Body: FrameStateBody{Locked: locked}}, nil
+		return &FrameStateResponse{Body: frameStateBody(st)}, nil
 	})
 
 	huma.Get(bleGrp, "/frame", func(_ context.Context, _ *struct{}) (*FrameStateResponse, error) {
-		return &FrameStateResponse{Body: FrameStateBody{Locked: s.scanner.IsFrameLocked()}}, nil
+		return &FrameStateResponse{Body: frameStateBody(s.scanner.FrameStatus())}, nil
 	})
+}
+
+// saveFrameAutoLock persists frame.auto_lock. Caller must hold configMu.
+func (s *Server) saveFrameAutoLock(enabled bool) error {
+	cfg, _ := s.loadAppConfig()
+	cfg.Frame.AutoLock = enabled
+	return data.SaveAll(s.configPath, cfg)
 }
 
 func (s *Server) updateBLEDevice(addr, name string) {

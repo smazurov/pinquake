@@ -93,7 +93,15 @@ type CrosshairConfig struct {
 
 type AutoLockConfig struct {
 	SpreadWindow    float64 `json:"spread_window" toml:"spread_window" doc:"Sliding window duration (s)" minimum:"1" maximum:"60" default:"5"`
-	SpreadThreshold float64 `json:"spread_threshold" toml:"spread_threshold" doc:"Stdev threshold (g) to trigger lock" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.005"`
+	SpreadThreshold float64 `json:"spread_threshold" toml:"spread_threshold" doc:"Max per-axis stdev (g) over the window to count as stable" minimum:"0.001" maximum:"1.0" multipleOf:"0.001" default:"0.005"`
+	RelockThreshold float64 `json:"relock_threshold" toml:"relock_threshold" doc:"Re-lock when settled gravity moves this far (g) from the locked frame" minimum:"0.001" maximum:"0.2" multipleOf:"0.001" default:"0.01"`
+}
+
+// FrameConfig holds reference-frame state owned by the lock button
+// (POST /api/ble/frame), kept out of [app.auto_lock] so config-page saves of
+// the tuning fields can't overwrite it.
+type FrameConfig struct {
+	AutoLock bool `json:"auto_lock" toml:"auto_lock" doc:"Auto-lock the reference frame on connect" default:"true"`
 }
 
 type BLEConfig struct {
@@ -105,14 +113,14 @@ type BLEConfig struct {
 type ExperimentConfig struct {
 	VizBase
 	ForceThresholds
-	Decay  float64 `json:"decay_s" toml:"decay_s" doc:"Decay time (s)" minimum:"0.05" maximum:"2" multipleOf:"0.01" default:"0.3"`
+	Decay float64 `json:"decay_s" toml:"decay_s" doc:"Decay time (s)" minimum:"0.05" maximum:"2" multipleOf:"0.01" default:"0.3"`
 }
 
 type PlumbBobConfig struct {
 	VizBase
 	ForceThresholds
-	BobDistance   float64 `json:"bob_distance" toml:"bob_distance" doc:"Bob distance from pivot (m)" minimum:"0.04" maximum:"0.13" multipleOf:"0.01" default:"0.10"`
-	DampingRatio  float64 `json:"damping_ratio" toml:"damping_ratio" doc:"Damping ratio (0=free, 1=critical)" minimum:"0.05" maximum:"0.5" multipleOf:"0.01" default:"0.15"`
+	BobDistance  float64 `json:"bob_distance" toml:"bob_distance" doc:"Bob distance from pivot (m)" minimum:"0.04" maximum:"0.13" multipleOf:"0.01" default:"0.10"`
+	DampingRatio float64 `json:"damping_ratio" toml:"damping_ratio" doc:"Damping ratio (0=free, 1=critical)" minimum:"0.05" maximum:"0.5" multipleOf:"0.01" default:"0.15"`
 }
 
 type PinQuakeConfig struct {
@@ -122,6 +130,7 @@ type PinQuakeConfig struct {
 	Experiment ExperimentConfig `json:"experiment" toml:"experiment"`
 	PlumbBob   PlumbBobConfig   `json:"plumb_bob" toml:"plumb_bob"`
 	AutoLock   AutoLockConfig   `json:"auto_lock" toml:"auto_lock"`
+	Frame      FrameConfig      `json:"frame" toml:"frame"`
 	Display    DisplayConfig    `json:"display" toml:"display"`
 	Sensor     map[string]any   `json:"sensor,omitempty" toml:"sensor,omitempty"`
 }
@@ -161,7 +170,9 @@ func DefaultConfig() PinQuakeConfig {
 		AutoLock: AutoLockConfig{
 			SpreadWindow:    5,
 			SpreadThreshold: 0.005,
+			RelockThreshold: 0.01,
 		},
+		Frame: FrameConfig{AutoLock: true},
 		Display: DisplayConfig{
 			DelayMs:  0,
 			TriggerG: 0.02,
