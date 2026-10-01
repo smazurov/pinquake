@@ -63,7 +63,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go server.AutoConnect()
+	bleDone := make(chan struct{})
+	go func() {
+		scanner.Run(ctx) // closes the link when ctx is done
+		close(bleDone)
+	}()
+	server.AutoConnect()
 
 	go func() {
 		logger.Info("Starting PinQuake", "port", opts.Port)
@@ -83,9 +88,7 @@ func main() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if scanner.GetState() == ble.StateConnected {
-			scanner.Disconnect()
-		}
+		<-bleDone
 		eventBus.Publish(events.BLEStatusEvent{
 			Status:    "disconnected",
 			Reason:    "shutdown",

@@ -69,12 +69,7 @@ func (s *Server) registerBLERoutes() {
 	}, map[string]any{
 		"device": events.BLEScanResultEvent{},
 	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
-		if err := s.scanner.Scan(ctx); err != nil {
-			send.Data(struct {
-				Error string `json:"error"`
-			}{Error: err.Error()})
-			return
-		}
+		s.scanner.Scan(ctx)
 
 		ch := make(chan any, 64)
 		unsub := events.SubscribeToChannel[events.BLEScanResultEvent](s.eventBus, ch)
@@ -93,17 +88,18 @@ func (s *Server) registerBLERoutes() {
 	})
 
 	huma.Post(bleGrp, "/connect", func(_ context.Context, input *ConnectRequest) (*BLEActionResponse, error) {
+		// Detect the sensor type on connect; a factory left over from the
+		// previously saved device may not match this one.
+		s.scanner.SetSensorFactory(nil)
 		if err := s.scanner.Connect(input.Body.Address, input.Body.Name); err != nil {
-			return nil, huma.Error409Conflict(fmt.Sprintf("cannot connect: %v", err))
+			return nil, huma.Error422UnprocessableEntity(fmt.Sprintf("cannot connect: %v", err))
 		}
 		s.updateBLEDevice(input.Body.Address, input.Body.Name)
 		return bleOK, nil
 	})
 
 	huma.Post(bleGrp, "/disconnect", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
-		if err := s.scanner.Disconnect(); err != nil {
-			return nil, huma.Error409Conflict(fmt.Sprintf("cannot disconnect: %v", err))
-		}
+		s.scanner.Disconnect()
 		s.updateBLEDevice("", "")
 		return bleOK, nil
 	})

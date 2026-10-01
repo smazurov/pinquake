@@ -12,7 +12,12 @@ func accelMag(ax, ay, az float32) float32 {
 	return float32(math.Sqrt(float64(ax*ax + ay*ay + az*az)))
 }
 
+// makeNotificationHandler returns a handler bound to the current session;
+// it ignores packets once that session has ended.
 func (s *Scanner) makeNotificationHandler() func([]byte) {
+	s.mu.Lock()
+	session := s.session
+	s.mu.Unlock()
 	return func(buf []byte) {
 		ori, ok := orientation.DecodeV1(buf)
 		if !ok {
@@ -22,6 +27,10 @@ func (s *Scanner) makeNotificationHandler() func([]byte) {
 		now := time.Now()
 
 		s.mu.Lock()
+		if s.session != session {
+			s.mu.Unlock()
+			return
+		}
 		lock, locked := s.locker.Feed([3]float32{raw.Ax, raw.Ay, raw.Az}, now)
 		frame, hasFrame := s.locker.Frame()
 		swap := s.swapXY

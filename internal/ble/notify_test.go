@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/smazurov/pinquake/internal/events"
@@ -21,67 +22,52 @@ func v1Packet(ax, ay, az float32) []byte {
 	return buf
 }
 
-func newTestScanner(t *testing.T) (*Scanner, <-chan events.FrameStateEvent) {
-	t.Helper()
-	bus := events.New()
-	ch := make(chan events.FrameStateEvent, 32)
-	unsub := bus.Subscribe(func(e events.FrameStateEvent) { ch <- e })
-	t.Cleanup(unsub)
-	s := NewScanner(bus, slog.New(slog.NewTextHandler(io.Discard, nil)))
+const lockWindow = 5 * time.Second
+
+func newTestScanner() *Scanner {
+	s := NewScanner(events.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.ConfigureFrameLock(framelock.Config{
 		Enabled:         true,
-		Window:          100 * time.Millisecond,
+		Window:          lockWindow,
 		Threshold:       0.005,
 		RelockThreshold: 0.01,
 	})
-	return s, ch
+	return s
 }
 
+// stream feeds a still sensor at 200 Hz for d of (virtual) time.
 func stream(handler func([]byte), d time.Duration) {
 	pkt := v1Packet(1, 0, 0)
 	for end := time.Now().Add(d); time.Now().Before(end); {
 		handler(pkt)
-		time.Sleep(2 * time.Millisecond)
-	}
-}
-
-func waitForReason(t *testing.T, ch <-chan events.FrameStateEvent, reason framelock.Reason) {
-	t.Helper()
-	timeout := time.After(time.Second)
-	for {
-		select {
-		case e := <-ch:
-			if e.Reason == string(reason) {
-				return
-			}
-		case <-timeout:
-			t.Fatalf("no frame-state event with reason %q", reason)
-		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
 func TestAutoLocksOnConnectAndAgainAfterReconnect(t *testing.T) {
-	s, ch := newTestScanner(t)
-	handler := s.makeNotificationHandler()
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestScanner()
+		handler := s.makeNotificationHandler()
 
-	stream(handler, 250*time.Millisecond)
-	waitForReason(t, ch, framelock.ReasonStable)
-	if st := s.FrameStatus(); st.State != framelock.StateLocked {
-		t.Fatalf("state = %q after stable stream, want locked", st.State)
-	}
+		stream(handler, lockWindow+time.Second)
+		if st := s.FrameStatus(); st.State != framelock.StateLocked {
+			t.Fatalf("state = %q after a stable window, want locked", st.State)
+		}
 
-	// Connection lost: same path as user disconnect and D-Bus "lost".
-	s.mu.Lock()
-	s.resetConnectionState()
-	s.mu.Unlock()
-	if st := s.FrameStatus(); !st.Enabled || st.State != framelock.StateSettling {
-		t.Fatalf("after disconnect status = %+v, want enabled/settling", st)
-	}
+		// Link ended (lost, forgotten or switched): the supervisor calls onUnlink.
+		s.onUnlink()
+		stream(handler, lockWindow+time.Second) // stale packets from the old link
+		if st := s.FrameStatus(); st.State == framelock.StateLocked {
+			t.Fatal("stale notifications from the old link re-locked the frame")
+		}
+		if st := s.FrameStatus(); !st.Enabled || st.State != framelock.StateSettling {
+			t.Fatalf("after disconnect status = %+v, want enabled/settling", st)
+		}
 
-	handler = s.makeNotificationHandler() // new connection, new handler
-	stream(handler, 250*time.Millisecond)
-	waitForReason(t, ch, framelock.ReasonStable)
-	if st := s.FrameStatus(); st.State != framelock.StateLocked {
-		t.Fatalf("state = %q after reconnect, want locked", st.State)
-	}
+		handler = s.makeNotificationHandler() // new connection, new handler
+		stream(handler, lockWindow+time.Second)
+		if st := s.FrameStatus(); st.State != framelock.StateLocked {
+			t.Fatalf("state = %q after reconnect, want locked", st.State)
+		}
+	})
 }

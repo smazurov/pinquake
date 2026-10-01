@@ -114,8 +114,11 @@ func NewServer(opts *Options) *Server {
 		case "connected":
 			server.log("info", fmt.Sprintf("Connected to %s", e.DisplayName()))
 		case "idle":
-			if e.Device != "" {
-				server.log("error", fmt.Sprintf("Connection to %s failed", e.DisplayName()))
+			switch {
+			case e.Device != "" && e.Reason != "":
+				server.log("error", fmt.Sprintf("Connection to %s failed: %s; retrying", e.DisplayName(), e.Reason))
+			case e.Reason != "":
+				server.log("error", fmt.Sprintf("BLE %s; retrying", e.Reason))
 			}
 		case "disconnected":
 			msg := "Disconnected"
@@ -151,24 +154,18 @@ func (s *Server) Start(addr string) error {
 	return s.httpServer.ListenAndServe()
 }
 
+// AutoConnect makes the saved device the wanted one. The scanner keeps
+// searching for it (and reconnecting) until the user disconnects.
 func (s *Server) AutoConnect() {
 	cfg, err := s.loadAppConfig()
-	if err != nil {
+	if err != nil || cfg.BLE.DeviceAddress == "" {
 		return
 	}
-	if cfg.BLE.DeviceAddress != "" {
-		// Wait for BLE adapter to be ready before attempting connection.
-		select {
-		case <-s.scanner.Ready():
-		case <-time.After(2 * time.Minute):
-			return
-		}
-		if cfg.BLE.SensorName != "" {
-			if entry := sensors.FactoryByName(cfg.BLE.SensorName); entry != nil {
-				s.scanner.SetSensorFactory(entry.Factory)
-			}
-		}
-		_ = s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName)
+	if entry := sensors.FactoryByName(cfg.BLE.SensorName); entry != nil {
+		s.scanner.SetSensorFactory(entry.Factory)
+	}
+	if err := s.scanner.Connect(cfg.BLE.DeviceAddress, cfg.BLE.DeviceName); err != nil {
+		s.log("error", fmt.Sprintf("Saved BLE device ignored: %v", err))
 	}
 }
 

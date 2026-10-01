@@ -2,7 +2,6 @@ package ble
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -13,11 +12,12 @@ import (
 	"tinygo.org/x/bluetooth"
 )
 
+// State is the connection state as shown to the UI. Searching for the saved
+// device reports as idle so the UI keeps its scan button available.
 type State string
 
 const (
 	StateIdle       State = "idle"
-	StateScanning   State = "scanning"
 	StateConnecting State = "connecting"
 	StateConnected  State = "connected"
 )
@@ -26,19 +26,18 @@ type Scanner struct {
 	adapter  *bluetooth.Adapter
 	eventBus *events.Bus
 	logger   *slog.Logger
+	sup      *Supervisor
 
 	mu            sync.Mutex
 	state         State
-	device        *bluetooth.Device
+	deviceAddr    string
 	deviceName    string
 	sensor        sensors.Sensor
 	sensorFactory func() sensors.Sensor
-	scanCancel    context.CancelFunc
-	scanDone      chan struct{}
-	connCtx       context.Context
+	connCtx       context.Context // session lifetime (battery polling)
 	connCancel    context.CancelFunc
+	session       int // bumped per link; stale notification handlers no-op
 	swapXY        bool
-	disconnecting bool
 	onConnect     func(sensorName string)
 
 	locker         *framelock.Locker
@@ -48,7 +47,7 @@ type Scanner struct {
 }
 
 func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
-	return &Scanner{
+	s := &Scanner{
 		adapter:  bluetooth.DefaultAdapter,
 		eventBus: eventBus,
 		logger:   logger,
@@ -60,14 +59,24 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 		}),
 		ready: make(chan struct{}),
 	}
+	radio := &bluezRadio{adapter: s.adapter, logger: logger}
+	s.sup = NewSupervisor(radio, DefaultSupervisorConfig(), SupervisorHooks{
+		OnStatus: s.onLinkStatus,
+		OnLink:   s.onLink,
+		OnUnlink: s.onUnlink,
+	})
+	return s
 }
 
-func (s *Scanner) Init() error {
-	err := s.adapter.Enable()
-	if err == nil {
-		close(s.ready)
+// Run drives the connection supervisor once the adapter is enabled, until
+// ctx is done. On return the link (if any) is closed.
+func (s *Scanner) Run(ctx context.Context) {
+	select {
+	case <-s.ready:
+	case <-ctx.Done():
+		return
 	}
-	return err
+	s.sup.Run(ctx)
 }
 
 // InitWithRetry enables the BLE adapter, retrying with exponential backoff
@@ -95,11 +104,6 @@ func (s *Scanner) InitWithRetry(stop chan struct{}) {
 		close(s.ready)
 		return
 	}
-}
-
-// Ready returns a channel that is closed when the adapter is enabled.
-func (s *Scanner) Ready() <-chan struct{} {
-	return s.ready
 }
 
 func (s *Scanner) GetState() State {
@@ -228,8 +232,4 @@ func (s *Scanner) ApplySensorConfig(entry sensors.SensorEntry, cfg any) error {
 	s.locker.DiscardSamples()
 	s.mu.Unlock()
 	return err
-}
-
-func errState(action string, state State) error {
-	return fmt.Errorf("cannot %s: state is %s", action, state)
 }
