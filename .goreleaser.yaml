@@ -20,7 +20,7 @@ builds:
     tags:
       - ui_embed
     ldflags:
-      - -s -w
+      - -s -w -X main.version={{.Version}}
 
 archives:
   - id: default

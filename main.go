@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,9 +24,22 @@ type Options struct {
 	Port   string `default:":8091" toml:"server.port" env:"SERVER_PORT"`
 }
 
+// version is stamped in at build time by goreleaser (-X main.version={{.Version}}).
+// install.sh parses `pinquake --version` to tell an upgrade from a downgrade, so
+// keep the output a bare version string with nothing else on the line.
+var version = "dev"
+
 func main() {
 	dumpOpenAPI := flag.Bool("openapi", false, "Dump OpenAPI spec to stdout and exit")
+	showVersion := false
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	flag.BoolVar(&showVersion, "v", false, "Print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	opts := &Options{}
 	data.ApplyDefaults(opts)
