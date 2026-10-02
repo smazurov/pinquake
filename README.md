@@ -21,6 +21,15 @@ journalctl --user -u pinquake -f   # logs
 
 Open `http://localhost:8091` to configure sensor connection, visualization settings, and grab the overlay URLs for OBS.
 
+### Picking a version
+
+Pass a version to pin the install, or `dev` for the rolling build from main. Downgrades work the same way.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/smazurov/pinquake/main/install.sh | bash -s -- 1.4.0
+curl -fsSL https://raw.githubusercontent.com/smazurov/pinquake/main/install.sh | bash -s -- dev
+```
+
 ## Let OBS show and hide the overlays (optional)
 
 By default the overlays hide themselves when the trigger fades. PinQuake can instead toggle a source or group in OBS, so you can use OBS show/hide transitions or hide several sources together:
