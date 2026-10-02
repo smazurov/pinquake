@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 	"tinygo.org/x/bluetooth"
@@ -94,10 +95,11 @@ func FactoryByName(name string) *SensorEntry {
 	return nil
 }
 
-func Match(result bluetooth.ScanResult) *SensorEntry {
+// Match finds the sensor type that advertises one of the service uuids.
+func Match(uuids []bluetooth.UUID) *SensorEntry {
 	for i := range Registry {
 		for _, uuid := range Registry[i].ServiceUUIDs {
-			if result.HasServiceUUID(uuid) {
+			if slices.Contains(uuids, uuid) {
 				return &Registry[i]
 			}
 		}

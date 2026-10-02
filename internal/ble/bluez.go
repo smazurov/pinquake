@@ -2,8 +2,10 @@ package ble
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -18,43 +20,170 @@ import (
 // bluetoothd is slow or wedged.
 const dbusTimeout = 5 * time.Second
 
-// bluezRadio is the Radio backed by tinygo bluetooth over BlueZ D-Bus.
-// The adapter must be enabled before use.
+// bluezRadio is the Radio over BlueZ D-Bus: it scans on its own D-Bus
+// connections and connects through tinygo bluetooth. The adapter must be
+// enabled before use.
 type bluezRadio struct {
 	adapter *bluetooth.Adapter
 	logger  *slog.Logger
 }
 
+const adapterPath = dbus.ObjectPath("/org/bluez/hci0")
+
+var errAdapterOff = errors.New("bluetooth adapter powered off")
+
+// Scan runs one discovery session on its own D-Bus connection.
+//
+// BlueZ keeps a discovery session per client connection, and its Discovering
+// property is per adapter: it drops whenever another client that set a
+// discovery filter disconnects, even while we are still registered.
+// tinygo's Adapter.Scan treats that as the end of its scan and returns
+// without StopDiscovery, so BlueZ answers every later StartDiscovery on the
+// shared connection with "Operation already in progress". Here Discovering
+// is ignored, and closing the connection ends the session even if
+// StopDiscovery fails.
 func (r *bluezRadio) Scan(ctx context.Context, found func(Advertisement)) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- r.adapter.Scan(func(_ *bluetooth.Adapter, res bluetooth.ScanResult) {
-			adv := Advertisement{
-				Address: res.Address.String(),
-				Name:    res.LocalName(),
-				RSSI:    int(res.RSSI),
+	conn, err := dbus.ConnectSystemBus()
+	if err != nil {
+		return fmt.Errorf("open D-Bus for scan: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Subscribe before starting so no device found early is missed. The
+	// connection is ours, so closing it drops the matches.
+	for _, match := range [][]dbus.MatchOption{
+		{dbus.WithMatchSender("org.bluez"), dbus.WithMatchInterface("org.freedesktop.DBus.ObjectManager"), dbus.WithMatchMember("InterfacesAdded")},
+		{dbus.WithMatchSender("org.bluez"), dbus.WithMatchInterface("org.freedesktop.DBus.Properties"), dbus.WithMatchMember("PropertiesChanged"), dbus.WithMatchPathNamespace(adapterPath)},
+	} {
+		if err := conn.AddMatchSignal(match...); err != nil {
+			return fmt.Errorf("watch scan results: %w", err)
+		}
+	}
+	sigs := make(chan *dbus.Signal, 256)
+	conn.Signal(sigs)
+
+	adapter := conn.Object("org.bluez", adapterPath)
+	if err := callBounded(adapter, "org.bluez.Adapter1.SetDiscoveryFilter", map[string]any{"Transport": "le"}); err != nil {
+		return fmt.Errorf("set discovery filter: %w", err)
+	}
+	var objects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+	listCtx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+	err = conn.Object("org.bluez", "/").CallWithContext(listCtx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objects)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("list known devices: %w", err)
+	}
+	devices := newDiscovered(objects)
+	if err := callBounded(adapter, "org.bluez.Adapter1.StartDiscovery"); err != nil {
+		return fmt.Errorf("start discovery: %w", err)
+	}
+
+	for ctx.Err() == nil {
+		select {
+		case <-ctx.Done():
+		case sig, ok := <-sigs:
+			if !ok {
+				return errors.New("D-Bus connection closed during scan")
 			}
-			if entry := sensors.Match(res); entry != nil {
-				adv.SensorName = entry.Name
+			adv, seen, err := devices.handle(sig)
+			if err != nil {
+				return err
 			}
-			found(adv)
-		})
-	}()
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
+			if seen {
+				found(adv)
+			}
+		}
 	}
-	// tinygo's StopScan takes no context.
-	if err := withTimeout("stop scan", r.adapter.StopScan); err != nil {
-		r.logger.Warn("BLE stop scan failed", "error", err)
+	if err := callBounded(adapter, "org.bluez.Adapter1.StopDiscovery"); err != nil {
+		r.logger.Warn("BLE stop discovery failed; closing the connection ends it", "error", err)
 	}
-	select {
-	case <-done:
-		return nil
-	case <-time.After(dbusTimeout):
-		return fmt.Errorf("scan did not stop within %s", dbusTimeout)
+	return nil
+}
+
+// discovered is BlueZ's view of the devices under our adapter, built from
+// the signals of one scan.
+type discovered map[dbus.ObjectPath]map[string]dbus.Variant
+
+// newDiscovered starts from the devices BlueZ already knows, as listed by
+// GetManagedObjects: they get no InterfacesAdded when seen again.
+func newDiscovered(objects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) discovered {
+	d := discovered{}
+	for path, ifaces := range objects {
+		if props, ok := ifaces["org.bluez.Device1"]; ok && underAdapter(path) {
+			d[path] = props
+		}
 	}
+	return d
+}
+
+func underAdapter(path dbus.ObjectPath) bool {
+	return strings.HasPrefix(string(path), string(adapterPath)+"/")
+}
+
+// handle applies sig and reports whether it carried an advertisement.
+func (d discovered) handle(sig *dbus.Signal) (Advertisement, bool, error) {
+	switch sig.Name {
+	case "org.freedesktop.DBus.ObjectManager.InterfacesAdded":
+		if len(sig.Body) < 2 {
+			return Advertisement{}, false, nil
+		}
+		path, _ := sig.Body[0].(dbus.ObjectPath)
+		ifaces, _ := sig.Body[1].(map[string]map[string]dbus.Variant)
+		props, ok := ifaces["org.bluez.Device1"]
+		if !ok || !underAdapter(path) {
+			return Advertisement{}, false, nil
+		}
+		d[path] = props
+		return advertisement(props), true, nil
+	case "org.freedesktop.DBus.Properties.PropertiesChanged":
+		if len(sig.Body) < 2 {
+			return Advertisement{}, false, nil
+		}
+		iface, _ := sig.Body[0].(string)
+		changed, _ := sig.Body[1].(map[string]dbus.Variant)
+		if iface == "org.bluez.Adapter1" && sig.Path == adapterPath {
+			if on, ok := changed["Powered"].Value().(bool); ok && !on {
+				return Advertisement{}, false, errAdapterOff
+			}
+			return Advertisement{}, false, nil
+		}
+		props, ok := d[sig.Path]
+		if iface != "org.bluez.Device1" || !ok {
+			return Advertisement{}, false, nil
+		}
+		maps.Copy(props, changed)
+		// BlueZ updates these only from received advertisements.
+		_, rssi := changed["RSSI"]
+		_, mdata := changed["ManufacturerData"]
+		_, sdata := changed["ServiceData"]
+		return advertisement(props), rssi || mdata || sdata, nil
+	}
+	return Advertisement{}, false, nil
+}
+
+func advertisement(props map[string]dbus.Variant) Advertisement {
+	addr, _ := props["Address"].Value().(string)
+	name, _ := props["Name"].Value().(string)
+	rssi, _ := props["RSSI"].Value().(int16)
+	adv := Advertisement{Address: addr, Name: name, RSSI: int(rssi)}
+	uuidStrs, _ := props["UUIDs"].Value().([]string)
+	uuids := make([]bluetooth.UUID, 0, len(uuidStrs))
+	for _, s := range uuidStrs {
+		if u, err := bluetooth.ParseUUID(s); err == nil {
+			uuids = append(uuids, u)
+		}
+	}
+	if entry := sensors.Match(uuids); entry != nil {
+		adv.SensorName = entry.Name
+	}
+	return adv
+}
+
+// callBounded calls method with dbusTimeout.
+func callBounded(obj dbus.BusObject, method string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+	defer cancel()
+	return obj.CallWithContext(ctx, method, 0, args...).Err
 }
 
 // Connect wraps tinygo's blocking Connect, which ignores ConnectionTimeout
@@ -128,19 +257,6 @@ func disconnectDevice(obj dbus.BusObject) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
 	defer cancel()
 	return obj.CallWithContext(ctx, "org.bluez.Device1.Disconnect", 0).Err
-}
-
-// withTimeout runs a context-less blocking call (tinygo's D-Bus wrappers)
-// for at most dbusTimeout. On timeout the call is abandoned, not cancelled.
-func withTimeout(what string, fn func() error) error {
-	done := make(chan error, 1)
-	go func() { done <- fn() }()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(dbusTimeout):
-		return fmt.Errorf("%s: timed out after %s", what, dbusTimeout)
-	}
 }
 
 // bluezLink watches BlueZ's Device1.Connected property to detect drops;
