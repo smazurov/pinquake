@@ -23,26 +23,116 @@ error() {
     echo -e "${RED}$1${NC}" >&2
 }
 
-# Parse flags
-CHANNEL="latest"
-for arg in "$@"; do
-    case "$arg" in
-        --dev) CHANNEL="dev" ;;
+usage() {
+    cat << 'EOF'
+Usage: install.sh [version]
+
+  version   Release to install: a version number (1.4.0 or v1.4.0), or "dev"
+            for the rolling build from main. Leave it out for the latest release.
+            Upgrades and downgrades both work.
+
+Examples:
+  install.sh                latest release
+  install.sh 1.4.0          a specific version
+  install.sh dev            rolling dev build
+
+  curl -fsSL https://raw.githubusercontent.com/smazurov/pinquake/main/install.sh \
+    | bash -s -- 1.4.0
+
+  PINQUAKE_VERSION=1.4.0    the same thing through the environment
+EOF
+}
+
+# The version to install. "dev" is a version like any other: it names the rolling
+# release that main pushes to.
+VERSION="${PINQUAKE_VERSION:-}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$VERSION" && "$VERSION" != "$1" ]]; then
+                error "Specify only one version (got \"$VERSION\" and \"$1\")"
+                exit 1
+            fi
+            VERSION="$1"
+            ;;
     esac
+    shift
 done
-if [[ "${DEV:-0}" == "1" ]]; then
-    CHANNEL="dev"
+
+# Drop an optional leading "v", then validate.
+VERSION="${VERSION#v}"
+if [[ -n "$VERSION" && "$VERSION" != "dev" ]]; then
+    if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+        error "Invalid version: \"$VERSION\". Expected something like 1.4.0, or \"dev\"."
+        exit 1
+    fi
 fi
 
+# Release tag the archive lives under, empty for "whatever is latest".
+if [[ "$VERSION" == "dev" ]]; then
+    TAG="dev"
+    LABEL="dev build"
+elif [[ -n "$VERSION" ]]; then
+    TAG="v$VERSION"
+    LABEL="$TAG"
+else
+    TAG=""
+    LABEL="latest release"
+fi
+
+# installed_version echoes the version of the installed binary, or fails when there
+# is none. Binaries built before --version existed fail too.
+installed_version() {
+    local bin="$BIN_DIR/pinquake" out
+    [[ -x "$bin" ]] || return 1
+    out=$("$bin" --version 2>/dev/null | tr -d '[:space:]') || return 1
+    [[ -n "$out" ]] || return 1
+    echo "${out#v}"
+}
+
+# version_cmp echoes -1, 0, or 1 for $1 less than, equal to, or greater than $2.
+version_cmp() {
+    local lowest
+    if [[ "$1" == "$2" ]]; then
+        echo 0
+        return
+    fi
+    lowest=$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)
+    if [[ "$lowest" == "$1" ]]; then
+        echo -1
+    else
+        echo 1
+    fi
+}
+
+INSTALLED=$(installed_version || true)
 UPGRADE=false
 if [[ -x "$BIN_DIR/pinquake" ]]; then
     UPGRADE=true
 fi
 
 if $UPGRADE; then
-    info "Upgrading pinquake (channel: $CHANNEL)..."
+    info "Updating pinquake to $LABEL..."
+    if [[ -n "$VERSION" && "$VERSION" != "dev" ]]; then
+        case "$(version_cmp "$VERSION" "$INSTALLED")" in
+            -1)
+                warn "This is a downgrade: $INSTALLED -> $VERSION"
+                warn "Config written by the newer version may not be understood."
+                ;;
+            0) info "$INSTALLED is already installed, reinstalling." ;;
+        esac
+    fi
 else
-    info "Installing pinquake (channel: $CHANNEL)..."
+    info "Installing pinquake ($LABEL)..."
 fi
 echo ""
 
@@ -65,17 +155,22 @@ echo "      $ARCH"
 
 # Step 2: Download and install binary
 info "[2/3] Downloading pinquake..."
-if [[ "$CHANNEL" == "dev" ]]; then
-    DOWNLOAD_URL="https://github.com/$REPO/releases/download/dev/pinquake_linux_${ARCH}.tar.gz"
+if [[ -n "$TAG" ]]; then
+    DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/pinquake_linux_${ARCH}.tar.gz"
 else
     DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/pinquake_linux_${ARCH}.tar.gz"
 fi
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+trap 'rm -rf "$TEMP_DIR"' EXIT
 
 if ! curl -fsSL -o "$TEMP_DIR/pinquake.tar.gz" "$DOWNLOAD_URL"; then
     error "Failed to download from $DOWNLOAD_URL"
-    error "Make sure a release exists with the archive: pinquake_linux_${ARCH}.tar.gz"
+    if [[ -n "$TAG" ]]; then
+        error "Release $TAG not found. Available releases:"
+        error "  https://github.com/$REPO/releases"
+    else
+        error "Make sure a release exists with the archive: pinquake_linux_${ARCH}.tar.gz"
+    fi
     exit 1
 fi
 
@@ -90,7 +185,13 @@ mkdir -p "$BIN_DIR"
 tar -xzf "$TEMP_DIR/pinquake.tar.gz" -C "$TEMP_DIR"
 mv "$TEMP_DIR/pinquake" "$BIN_DIR/pinquake"
 chmod +x "$BIN_DIR/pinquake"
-echo "      Installed to $BIN_DIR/pinquake"
+
+NEW=$(installed_version || true)
+if [[ -n "$NEW" ]]; then
+    echo "      Installed $NEW to $BIN_DIR/pinquake"
+else
+    echo "      Installed to $BIN_DIR/pinquake"
+fi
 
 # Step 3: Systemd service
 info "[3/3] Setting up systemd service..."
@@ -130,14 +231,25 @@ fi
 
 echo ""
 if $UPGRADE; then
+    if [[ -n "$INSTALLED" && -n "$NEW" ]]; then
+        case "$(version_cmp "$NEW" "$INSTALLED")" in
+            -1) info "Downgraded pinquake $INSTALLED -> $NEW" ;;
+            1)  info "Upgraded pinquake $INSTALLED -> $NEW" ;;
+            *)  info "Reinstalled pinquake $NEW" ;;
+        esac
+    else
+        info "Update complete!"
+    fi
     if command -v systemctl &> /dev/null && systemctl --user is-enabled pinquake.service &> /dev/null; then
         systemctl --user start pinquake.service
         echo "      Service restarted"
-        echo ""
     fi
-    info "Upgrade complete!"
 else
-    info "Installation complete!"
+    if [[ -n "$NEW" ]]; then
+        info "Installed pinquake $NEW!"
+    else
+        info "Installation complete!"
+    fi
     echo ""
     echo "To start pinquake now:"
     echo "  systemctl --user start pinquake"
