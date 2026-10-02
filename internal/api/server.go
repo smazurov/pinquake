@@ -128,27 +128,7 @@ func NewServer(opts *Options) *Server {
 
 	opts.EventBus.Subscribe(server.logFrameLock)
 
-	opts.EventBus.Subscribe(func(e events.BLEStatusEvent) {
-		switch e.Status {
-		case "connecting":
-			server.log("info", fmt.Sprintf("Connecting to %s", e.DisplayName()))
-		case "connected":
-			server.log("info", fmt.Sprintf("Connected to %s", e.DisplayName()))
-		case "idle":
-			switch {
-			case e.Device != "" && e.Reason != "":
-				server.log("error", fmt.Sprintf("Connection to %s failed: %s; retrying", e.DisplayName(), e.Reason))
-			case e.Reason != "":
-				server.log("error", fmt.Sprintf("BLE %s; retrying", e.Reason))
-			}
-		case "disconnected":
-			msg := "Disconnected"
-			if e.Reason != "" {
-				msg = fmt.Sprintf("Disconnected (%s)", e.Reason)
-			}
-			server.log("warn", msg)
-		}
-	})
+	opts.EventBus.Subscribe(server.bleStatusLogger())
 
 	// Start after subscribing so an always-visible trigger's initial show
 	// reaches the overlay and OBS.
@@ -177,6 +157,48 @@ func (s *Server) Start(addr string) error {
 		Handler: s.mux,
 	}
 	return s.httpServer.ListenAndServe()
+}
+
+// bleStatusLogger logs BLE link transitions. The search duty cycle (not
+// found, retry) only shows in the status; other failures are logged once
+// until the link connects or the device changes.
+func (s *Server) bleStatusLogger() func(events.BLEStatusEvent) {
+	prev := events.BLEStatusEvent{Status: "idle"}
+	var lastErr string
+	return func(e events.BLEStatusEvent) {
+		if e.Device != prev.Device || e.Status == "connected" {
+			lastErr = ""
+		}
+		switch e.Status {
+		case "searching":
+			switch {
+			case e.Reason == string(ble.ReasonLost) && prev.Status == "connected":
+				s.log("warn", fmt.Sprintf("Lost connection to %s; searching", e.DisplayName()))
+			case e.Device != prev.Device:
+				s.log("info", fmt.Sprintf("Searching for %s", e.DisplayName()))
+			}
+		case "waiting":
+			if e.Error != ble.ErrNotFound.Error() && e.Error != lastErr {
+				s.log("error", fmt.Sprintf("%s: %s; retrying", e.DisplayName(), e.Error))
+				lastErr = e.Error
+			}
+		case "connecting":
+			s.log("info", fmt.Sprintf("Connecting to %s", e.DisplayName()))
+		case "connected":
+			s.log("info", fmt.Sprintf("Connected to %s", e.DisplayName()))
+		case "idle":
+			switch {
+			case prev.Status == "idle":
+			case e.Reason == "shutdown":
+				s.log("warn", fmt.Sprintf("Disconnected from %s (shutdown)", prev.DisplayName()))
+			case prev.Status == "connected":
+				s.log("info", fmt.Sprintf("Disconnected from %s", prev.DisplayName()))
+			default:
+				s.log("info", fmt.Sprintf("Stopped searching for %s", prev.DisplayName()))
+			}
+		}
+		prev = e
+	}
 }
 
 // AutoConnect makes the saved device the wanted one. The scanner keeps

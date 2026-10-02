@@ -29,14 +29,16 @@ type OrientationEvent struct {
 
 func (e OrientationEvent) Type() uint32 { return TypeOrientation }
 
-// BLEStatusEvent reports BLE connection state changes.
+// BLEStatusEvent reports the link to the chosen BLE device.
 type BLEStatusEvent struct {
-	Status     string `json:"status"`
-	Reason     string `json:"reason,omitempty"`
-	Device     string `json:"device,omitempty"`
-	DeviceName string `json:"device_name,omitempty"`
-	SensorName string `json:"sensor_name,omitempty"`
-	Timestamp  string `json:"timestamp"`
+	Status     string  `json:"status" enum:"idle,searching,waiting,connecting,connected" doc:"idle: no device chosen; searching: scanning for it; waiting: backing off before searching again"`
+	Reason     string  `json:"reason,omitempty" enum:"lost,user,shutdown" doc:"lost: the device dropped the link (kept while searching for it again); user: disconnected on request; shutdown: server stopping"`
+	Device     string  `json:"device,omitempty" doc:"Address of the chosen device"`
+	DeviceName string  `json:"device_name,omitempty"`
+	SensorName string  `json:"sensor_name,omitempty"`
+	Error      string  `json:"error,omitempty" doc:"Why the last attempt failed (waiting)"`
+	RetryInS   float64 `json:"retry_in_s,omitempty" doc:"Seconds until the next attempt (waiting)"`
+	Timestamp  string  `json:"timestamp"`
 }
 
 func (e BLEStatusEvent) Type() uint32 { return TypeBLEStatus }

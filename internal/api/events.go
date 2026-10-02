@@ -58,12 +58,7 @@ func (s *Server) registerSSERoutes() {
 			return
 		}
 
-		if err := send.Data(events.BLEStatusEvent{
-			Status:     string(s.scanner.GetState()),
-			DeviceName: s.scanner.GetDeviceName(),
-			SensorName: s.scanner.GetSensorName(),
-			Timestamp:  time.Now().Format(time.RFC3339Nano),
-		}); err != nil {
+		if err := send.Data(s.scanner.StatusEvent()); err != nil {
 			return
 		}
 

@@ -36,7 +36,7 @@ type Link interface {
 var ErrLinkLost = errors.New("link lost")
 
 // ErrNotFound is reported when a scan window ends without the device.
-var ErrNotFound = errors.New("device not seen")
+var ErrNotFound = errors.New("device not found")
 
 // ErrConnectTimeout is reported when a connect attempt takes too long.
 var ErrConnectTimeout = errors.New("connect timed out")

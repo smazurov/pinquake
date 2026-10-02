@@ -12,15 +12,20 @@ import (
 	"tinygo.org/x/bluetooth"
 )
 
-// State is the connection state as shown to the UI. Searching for the saved
-// device reports as idle so the UI keeps its scan button available.
-type State string
+// Reason says why a link ended, as reported in BLE status events.
+type Reason string
 
 const (
-	StateIdle       State = "idle"
-	StateConnecting State = "connecting"
-	StateConnected  State = "connected"
+	ReasonLost Reason = "lost" // the device dropped the link
+	ReasonUser Reason = "user" // disconnected on request
 )
+
+// linkStatus is the last supervisor status plus what the UI is told about it.
+type linkStatus struct {
+	LinkStatus
+	reason  Reason
+	retryAt time.Time // when waiting
+}
 
 type Scanner struct {
 	adapter  *bluetooth.Adapter
@@ -29,7 +34,7 @@ type Scanner struct {
 	sup      *Supervisor
 
 	mu            sync.Mutex
-	state         State
+	status        linkStatus
 	deviceAddr    string
 	deviceName    string
 	sensor        sensors.Sensor
@@ -55,7 +60,7 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 		adapter:  bluetooth.DefaultAdapter,
 		eventBus: eventBus,
 		logger:   logger,
-		state:    StateIdle,
+		status:   linkStatus{LinkStatus: LinkStatus{State: LinkIdle}},
 		locker: framelock.New(framelock.Config{
 			Window:          5 * time.Second,
 			Threshold:       0.005,
@@ -112,16 +117,32 @@ func (s *Scanner) InitWithRetry(stop chan struct{}) {
 	}
 }
 
-func (s *Scanner) GetState() State {
+// StatusEvent describes the current link, for clients that just subscribed.
+func (s *Scanner) StatusEvent() events.BLEStatusEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state
+	return s.statusEventLocked(time.Now())
 }
 
-func (s *Scanner) GetDeviceName() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.deviceName
+func (s *Scanner) statusEventLocked(now time.Time) events.BLEStatusEvent {
+	st := s.status
+	ev := events.BLEStatusEvent{
+		Status:    string(st.State),
+		Reason:    string(st.reason),
+		Device:    st.Addr,
+		Timestamp: now.Format(time.RFC3339Nano),
+	}
+	if st.Addr != "" && st.Addr == s.deviceAddr {
+		ev.DeviceName = s.deviceName
+	}
+	if st.State == LinkConnected && s.sensor != nil {
+		ev.SensorName = s.sensor.Name()
+	}
+	if st.State == LinkWaiting && st.Err != nil {
+		ev.Error = st.Err.Error()
+		ev.RetryInS = max(0, st.retryAt.Sub(now).Seconds())
+	}
+	return ev
 }
 
 func (s *Scanner) Sensor() sensors.Sensor {
@@ -199,29 +220,6 @@ func (s *Scanner) SetSwapXY(swap bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.swapXY = swap
-}
-
-func (s *Scanner) GetSensorName() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sensor != nil {
-		return s.sensor.Name()
-	}
-	return ""
-}
-
-func (s *Scanner) publishStatus(status, device, reason, sensorName string) {
-	s.mu.Lock()
-	name := s.deviceName
-	s.mu.Unlock()
-	s.eventBus.Publish(events.BLEStatusEvent{
-		Status:     status,
-		Reason:     reason,
-		Device:     device,
-		DeviceName: name,
-		SensorName: sensorName,
-		Timestamp:  time.Now().Format(time.RFC3339Nano),
-	})
 }
 
 func (s *Scanner) ApplySensorConfig(entry sensors.SensorEntry, cfg any) error {

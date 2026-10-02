@@ -105,7 +105,7 @@ func main() {
 		defer close(done)
 		<-bleDone
 		eventBus.Publish(events.BLEStatusEvent{
-			Status:    "disconnected",
+			Status:    "idle",
 			Reason:    "shutdown",
 			Timestamp: time.Now().Format(time.RFC3339Nano),
 		})

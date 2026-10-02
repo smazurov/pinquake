@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { LinkIcon, LinkSlashIcon, NoSymbolIcon, BoltIcon, Battery0Icon, Battery50Icon, Battery100Icon, LockClosedIcon, LockOpenIcon, ArrowPathIcon } from "@heroicons/react/20/solid";
+import { LinkIcon, LinkSlashIcon, NoSymbolIcon, BoltIcon, Battery0Icon, Battery50Icon, Battery100Icon, LockClosedIcon, LockOpenIcon, ArrowPathIcon, XMarkIcon } from "@heroicons/react/20/solid";
 import { SSEClient, api } from "../lib/api";
 import type { SSEStatus } from "../lib/api";
 import type { components } from "../lib/api.generated";
 import type { OBSStatus } from "../lib/obs";
+import { bleDeviceLabel, bleStatusView, type BLEStatus, type BLEStatusView, type BLETone } from "../lib/ble";
 
 type BLEScanResult = components["schemas"]["BLEScanResultEvent"];
 type LogEntry = components["schemas"]["LogEntry"];
@@ -14,21 +15,18 @@ import Collapsible from "./Collapsible";
 const ICON_CLS = "h-[18px] w-[18px]";
 const FRAME_ENDPOINT = "/api/ble/frame" as const;
 
-type BLEState = "idle" | "scanning" | "connecting" | "connected" | "disconnected";
+const TONE_DOT: Record<BLETone, string> = {
+  off: "bg-red-400",
+  busy: "bg-yellow-400",
+  warn: "bg-orange-400",
+  ok: "bg-green-400",
+};
 
-function statusColor(state: BLEState, scanning: boolean, reason: string | null): string {
-  if (state === "connected") return "bg-green-400";
-  if (state === "connecting" || scanning) return "bg-yellow-400";
-  if (state === "disconnected" && reason === "lost") return "bg-orange-400";
-  return "bg-red-400";
-}
-
-function StatusDot({ state, scanning, reason, flashKey }: Readonly<{ state: BLEState; scanning: boolean; reason: string | null; flashKey?: number }>) {
-  const color = statusColor(state, scanning, reason);
+function StatusDot({ tone, flashKey }: Readonly<{ tone: BLETone; flashKey?: number }>) {
   return (
     <span
       key={flashKey}
-      className={`inline-block h-2 w-2 rounded-full ${color} ${flashKey ? "animate-[dot-flash_0.4s_ease-out]" : ""}`}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${TONE_DOT[tone]} ${flashKey ? "animate-[dot-flash_0.4s_ease-out]" : ""}`}
     />
   );
 }
@@ -45,11 +43,15 @@ function lockButtonStyle(frame: FrameState): { cls: string; title: string } {
   return { cls: "text-amber-400 hover:text-amber-300", title: "Waiting for a stable reading to lock. Click to disable auto-lock" };
 }
 
-function formatStateLabel(state: BLEState, scanning: boolean, disconnecting: boolean, reason: string | null): string {
-  if (disconnecting) return "Disconnecting";
-  if (scanning) return "Scanning";
-  if (state === "disconnected" && reason === "lost") return "Connection lost";
-  return state.charAt(0).toUpperCase() + state.slice(1);
+function headerLabel(view: BLEStatusView, scanning: boolean, forgetting: boolean): string {
+  if (forgetting) return view.connected ? "Disconnecting…" : "Forgetting…";
+  if (scanning) return "Scanning…";
+  return view.text;
+}
+
+/** When the next attempt is due (ms since epoch), if waiting. */
+function retryDeadline(status: BLEStatus, now: number): number | null {
+  return status.status === "waiting" && status.retry_in_s ? now + status.retry_in_s * 1000 : null;
 }
 
 function batteryProps(percent: number) {
@@ -79,17 +81,18 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
   onSensorChange?: (sensorName: string | null) => void;
   onOBSStatus?: (status: OBSStatus) => void;
 }>) {
-  const [bleState, setBleState] = useState<BLEState>("idle");
+  const [status, setStatus] = useState<BLEStatus | null>(null);
+  // Waiting: when the next attempt is due, and a clock ticking towards it.
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
   const [scanResults, setScanResults] = useState<Map<string, BLEScanResult>>(
     new Map(),
   );
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deviceName, setDeviceName] = useState<string | null>(null);
-  const [disconnecting, setDisconnecting] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
   const [frame, setFrame] = useState<FrameState>({ enabled: false, state: "unlocked" });
   const [battery, setBattery] = useState<{ percent: number; volts: number; charging: boolean } | null>(null);
-  const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [lockSpinKey, setLockSpinKey] = useState(0);
 
@@ -107,30 +110,30 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
       onStatusChange: (status) => {
         onSSEStatusRef.current?.(status);
         if (status === "reconnecting" || status === "disconnected") {
-          setBleState("disconnected");
+          setStatus(null); // unknown until the server sends it again
+          setRetryAt(null);
         }
       },
     });
     client.on("ble-status", (data) => {
-      setBleState(data.status as BLEState);
-      if (data.status === "disconnected") {
-        setDisconnectReason(data.reason ?? null);
-      } else {
-        setDisconnectReason(null);
-      }
-      if (data.status === "idle" || data.status === "disconnected") {
-        setDisconnecting(false);
-        setDeviceName(null);
-        setBattery(null);
-        onSensorChangeRef.current?.(null);
-      }
-      if (data.status === "connected" || data.status === "connecting") {
-        setDeviceName(data.device_name ?? null);
+      setStatus(data);
+      const t = Date.now();
+      setNow(t);
+      setRetryAt(retryDeadline(data, t));
+      if (data.status === "idle") setForgetting(false);
+      // Scanning is for choosing a device; once one is chosen, stop.
+      if (data.status !== "idle" && scanSSE.current) {
+        scanSSE.current.disconnect();
+        scanSSE.current = null;
+        setScanning(false);
         setScanResults(new Map());
       }
       if (data.status === "connected") {
         onSensorChangeRef.current?.(data.sensor_name ?? null);
         void api.GET(FRAME_ENDPOINT).then(({ data }) => { if (data) setFrame({ enabled: data.enabled, state: data.state }); });
+      } else {
+        setBattery(null);
+        onSensorChangeRef.current?.(null);
       }
     });
     client.on("battery", (data) => {
@@ -213,15 +216,22 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
 
   const lockStyle = lockButtonStyle(frame);
 
-  const handleDisconnect = useCallback(async () => {
+  // Disconnects, or stops searching for the chosen device, and forgets it.
+  const handleForget = useCallback(async () => {
     setError(null);
-    setDisconnecting(true);
+    setForgetting(true);
     const { error: err } = await api.POST("/api/ble/disconnect");
     if (err) {
       setError(err.detail ?? "Disconnect failed");
-      setDisconnecting(false);
+      setForgetting(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (retryAt === null) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [retryAt]);
 
   const hoveringRef = useRef(false);
   const [sortFlash, setSortFlash] = useState(0);
@@ -261,20 +271,20 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
 
   const reversedLog = useMemo(() => [...logEntries].reverse(), [logEntries]);
 
-  const isIdle = (bleState === "idle" || bleState === "disconnected") && !scanning;
-  const isConnecting = bleState === "connecting";
-  const isConnected = bleState === "connected";
+  const view = bleStatusView(status, retryAt === null ? 0 : Math.max(0, (retryAt - now) / 1000));
+  const canScan = status?.status === "idle" && !scanning;
+  const name = status ? bleDeviceLabel(status) : "";
 
-  const stateLabel = formatStateLabel(bleState, scanning, disconnecting, disconnectReason);
+  const label = headerLabel(view, scanning, forgetting);
 
   const headerContent = (
-    <div className="flex items-center justify-between w-full">
-      <div className="flex items-center gap-2">
-        <StatusDot state={bleState} scanning={scanning} reason={disconnectReason} flashKey={scanning ? sortFlash : undefined} />
-        {isConnected && deviceName ? (
+    <div className="flex items-center justify-between gap-2 w-full min-w-0">
+      <div className="flex items-center gap-2 min-w-0">
+        <StatusDot tone={scanning ? "busy" : view.tone} flashKey={scanning ? sortFlash : undefined} />
+        {view.connected && !forgetting ? (
           <span className="flex items-center gap-2">
             <span className="text-xs text-slate-300 truncate max-w-[140px]">
-              {deviceName}
+              {view.text}
             </span>
             {battery && (
               <span className="flex items-center gap-1 text-slate-400 shrink-0" title={`${battery.percent}%${battery.charging ? " (charging)" : ""}`}>
@@ -307,11 +317,11 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
             )}
           </span>
         ) : (
-          <span className="text-xs text-slate-400">{stateLabel}</span>
+          <span className="text-xs font-normal text-slate-400 truncate" title={label}>{label}</span>
         )}
       </div>
-      <div className="flex items-center gap-3">
-        {isIdle && (
+      <div className="flex items-center gap-3 shrink-0">
+        {canScan && (
           <button
             onClick={(e) => { e.stopPropagation(); startScan(); }}
             className="text-blue-400 hover:text-blue-300 transition-colors"
@@ -329,19 +339,14 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
             <NoSymbolIcon className={ICON_CLS} />
           </button>
         )}
-        {isConnecting && (
-          <span className="text-slate-400" title="Connecting...">
-            <LinkIcon className={`${ICON_CLS} animate-pulse`} />
-          </span>
-        )}
-        {isConnected && (
+        {view.chosen && (
           <button
-            onClick={(e) => { e.stopPropagation(); void handleDisconnect(); }}
-            className={`text-red-400 hover:text-red-300 transition-colors ${disconnecting ? "opacity-50 pointer-events-none" : ""}`}
-            title="Disconnect"
-            disabled={disconnecting}
+            onClick={(e) => { e.stopPropagation(); void handleForget(); }}
+            className={`text-red-400 hover:text-red-300 transition-colors ${forgetting ? "opacity-50 pointer-events-none" : ""}`}
+            title={view.connected ? `Disconnect and forget ${name}` : `Stop searching and forget ${name}`}
+            disabled={forgetting}
           >
-            <LinkSlashIcon className={ICON_CLS} />
+            {view.connected ? <LinkSlashIcon className={ICON_CLS} /> : <XMarkIcon className={ICON_CLS} />}
           </button>
         )}
       </div>
@@ -356,7 +361,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
         </div>
       )}
 
-      {sortedResults.length > 0 && !isConnected && (
+      {sortedResults.length > 0 && !view.chosen && (
         <div
           className="max-h-[280px] overflow-y-auto space-y-1"
           onMouseEnter={() => { hoveringRef.current = true; }}
@@ -366,7 +371,6 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
             <button
               key={device.address}
               className="w-full flex items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-700/50 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-              disabled={isConnecting}
               onClick={() => void handleConnect(device)}
             >
               <div className="min-w-0">

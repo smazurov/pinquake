@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/smazurov/pinquake/internal/sensors"
 	"tinygo.org/x/bluetooth"
@@ -45,47 +46,36 @@ func (s *Scanner) Disconnect() {
 	s.sup.Forget()
 }
 
-// onLinkStatus maps supervisor transitions to BLE status events. Searching
-// and backing off are not published: the UI keeps showing idle (or
-// "connection lost") with its scan button available.
+// onLinkStatus publishes every supervisor transition as a BLE status event.
+// Called from the supervisor loop, so events leave in transition order.
 func (s *Scanner) onLinkStatus(st LinkStatus) {
 	s.logger.Info("BLE link", "state", st.State, "addr", st.Addr, "err", st.Err, "retry_in", st.RetryIn)
 
+	now := time.Now()
 	s.mu.Lock()
-	prev := s.state
-	switch st.State {
-	case LinkConnecting:
-		s.state = StateConnecting
-	case LinkConnected:
-		s.state = StateConnected
-	default:
-		s.state = StateIdle
+	prev := s.status
+	next := linkStatus{LinkStatus: st}
+	switch {
+	case errors.Is(st.Err, ErrLinkLost):
+		next.reason = ReasonLost
+	case st.State == LinkSearching || st.State == LinkWaiting:
+		if prev.Addr == st.Addr {
+			next.reason = prev.reason // still searching for a lost link
+		}
+	case st.State == LinkIdle && prev.State != LinkIdle:
+		next.reason = ReasonUser
 	}
-	var sensorName string
-	if s.sensor != nil {
-		sensorName = s.sensor.Name()
+	if st.State == LinkWaiting {
+		next.retryAt = now.Add(st.RetryIn)
 	}
+	s.status = next
+	ev := s.statusEventLocked(now)
 	cb := s.onConnect
 	s.mu.Unlock()
 
-	switch {
-	case st.State == LinkConnecting:
-		s.publishStatus("connecting", st.Addr, "", "")
-	case st.State == LinkConnected:
-		s.publishStatus("connected", st.Addr, "", sensorName)
-		if cb != nil {
-			go cb(sensorName)
-		}
-	case errors.Is(st.Err, ErrLinkLost):
-		s.publishStatus("disconnected", "", "lost", "")
-	case st.State == LinkWaiting && prev == StateConnecting:
-		s.publishStatus("idle", st.Addr, st.Err.Error(), "")
-	case st.State == LinkWaiting && !errors.Is(st.Err, ErrNotFound):
-		s.publishStatus("idle", "", "scan failed: "+st.Err.Error(), "")
-	case st.State == LinkIdle && prev == StateConnected:
-		s.publishStatus("disconnected", "", "user", "")
-	case st.State == LinkIdle && prev == StateConnecting:
-		s.publishStatus("idle", "", "", "")
+	s.eventBus.Publish(ev)
+	if st.State == LinkConnected && cb != nil {
+		go cb(ev.SensorName)
 	}
 }
 

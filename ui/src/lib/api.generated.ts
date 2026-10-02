@@ -442,11 +442,27 @@ export interface components {
             timestamp: string;
         };
         BLEStatusEvent: {
+            /** @description Address of the chosen device */
             device?: string;
             device_name?: string;
-            reason?: string;
+            /** @description Why the last attempt failed (waiting) */
+            error?: string;
+            /**
+             * @description lost: the device dropped the link (kept while searching for it again); user: disconnected on request; shutdown: server stopping
+             * @enum {string}
+             */
+            reason?: "lost" | "user" | "shutdown";
+            /**
+             * Format: double
+             * @description Seconds until the next attempt (waiting)
+             */
+            retry_in_s?: number;
             sensor_name?: string;
-            status: string;
+            /**
+             * @description idle: no device chosen; searching: scanning for it; waiting: backing off before searching again
+             * @enum {string}
+             */
+            status: "idle" | "searching" | "waiting" | "connecting" | "connected";
             timestamp: string;
         };
         BatteryEvent: {
