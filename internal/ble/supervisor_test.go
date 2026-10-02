@@ -321,6 +321,16 @@ func (h *harness) expectState(want LinkState) LinkStatus {
 	return st
 }
 
+func (h *harness) expectNoStatus() {
+	h.t.Helper()
+	settle()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.statuses) != 0 {
+		h.t.Fatalf("link status reported: %+v", h.statuses)
+	}
+}
+
 func (h *harness) expectUnlinks(want int) {
 	h.t.Helper()
 	settle()
@@ -551,7 +561,7 @@ func TestBrowseWhileIdleScansUntilCancelled(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		seen := make(chan Advertisement, 8)
 
-		h.sup.Browse(ctx, collect(seen))
+		h.sup.Browse(ctx, Browser{Found: collect(seen)})
 		scan := h.nextScan()
 		scan.advertise(other)
 		expectAdv(t, seen, other)
@@ -564,29 +574,111 @@ func TestBrowseWhileIdleScansUntilCancelled(t *testing.T) {
 	})
 }
 
-func TestBrowseSharesScanWithSearch(t *testing.T) {
+// fakeBrowser records what a Browse reports.
+type fakeBrowser struct {
+	advs     chan Advertisement
+	statuses chan ScanStatus
+}
+
+func (h *harness) browse(ctx context.Context) *fakeBrowser {
+	b := &fakeBrowser{advs: make(chan Advertisement, 16), statuses: make(chan ScanStatus, 16)}
+	h.sup.Browse(ctx, Browser{
+		Found:  func(a Advertisement) { b.advs <- a },
+		Status: func(st ScanStatus) { b.statuses <- st },
+	})
+	return b
+}
+
+func (b *fakeBrowser) expectStatus(t *testing.T, want ScanState) ScanStatus {
+	t.Helper()
+	settle()
+	select {
+	case st := <-b.statuses:
+		if st.State != want {
+			t.Fatalf("browse status = %q (err=%v), want %q", st.State, st.Err, want)
+		}
+		return st
+	default:
+		t.Fatalf("no browse status, want %q", want)
+		return ScanStatus{}
+	}
+}
+
+func (b *fakeBrowser) noAdv(t *testing.T) {
+	t.Helper()
+	settle()
+	select {
+	case a := <-b.advs:
+		t.Fatalf("browser got %s after it ended", a.Address)
+	default:
+	}
+}
+
+func TestChoosingDeviceEndsBrowse(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		b := h.browse(ctx)
+		h.nextScan().advertise(other)
+		expectAdv(t, b.advs, other)
+
+		h.sup.Want(tracker)
+		if st := b.expectStatus(t, ScanEnded); !errors.Is(st.Err, ErrDeviceChosen) {
+			t.Fatalf("ended err=%v, want ErrDeviceChosen", st.Err)
+		}
+		h.nextScan().advertise(other) // the search for tracker
+		b.noAdv(t)
+	})
+}
+
+func TestChoosingDeviceJustSeenConnectsAtOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		b := h.browse(ctx)
+		h.nextScan().advertise(tracker)
+		expectAdv(t, b.advs, tracker)
+
+		h.sup.Want(tracker) // picked from the list
+		h.expectState(LinkConnecting)
+		h.noScan() // BlueZ still knows it: no new search
+		h.nextConnect().succeed()
+		h.expectState(LinkConnected)
+	})
+}
+
+func TestChoosingDeviceSeenLongAgoSearches(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		h.browse(ctx)
+		h.nextScan().advertise(tracker)
+
+		h.advance(time.Minute) // BlueZ forgets unpaired devices it stops seeing
+		h.sup.Want(tracker)
+		h.expectState(LinkSearching)
+		h.nextScan().advertise(tracker)
+		h.nextConnect().succeed()
+		h.expectState(LinkConnected)
+	})
+}
+
+func TestBrowseWhileDeviceChosenEndsAtOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
 		h.sup.Want(tracker)
-		scan := h.nextScan()
+		h.nextScan()
+		h.advance(10 * time.Second) // not found: backing off
+		h.expectState(LinkWaiting)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		seen := make(chan Advertisement, 8)
-		h.sup.Browse(ctx, collect(seen))
-		h.noScan() // BlueZ allows one discovery per client: reuse it
-
-		h.advance(time.Minute) // no scan window while someone is browsing
-		scan.advertise(other)
-		expectAdv(t, seen, other)
-		if scan.ctx.Err() != nil {
-			t.Fatal("search scan was cut short while browsing")
-		}
-
-		scan.advertise(tracker)
-		expectAdv(t, seen, tracker)
-		h.nextConnect().succeed()
-		h.expectState(LinkConnected)
+		b := h.browse(ctx)
+		b.expectStatus(t, ScanEnded)
+		h.noScan() // the backoff holds
 	})
 }
 
@@ -614,16 +706,18 @@ func TestBrowseScanErrorBacksOff(t *testing.T) {
 		h := newHarness(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		h.sup.Browse(ctx, func(Advertisement) {})
+		b := h.browse(ctx)
 
 		h.nextScan().fail <- errBoom
-		if st := h.expectState(LinkWaiting); !errors.Is(st.Err, errBoom) {
-			t.Fatalf("waiting err=%v, want boom", st.Err)
+		st := b.expectStatus(t, ScanWaiting)
+		if !errors.Is(st.Err, errBoom) || st.RetryIn != 2*time.Second {
+			t.Fatalf("waiting: err=%v retryIn=%v, want boom/2s", st.Err, st.RetryIn)
 		}
-		h.noScan() // no hot loop while the browser is still open
+		h.expectNoStatus() // no device wanted: the link stays idle
+		h.noScan()         // no hot loop while the browser is still open
 		h.advance(2 * time.Second)
-		h.expectState(LinkIdle)
 		h.nextScan()
+		b.expectStatus(t, ScanRunning)
 	})
 }
 
@@ -744,24 +838,6 @@ func TestShutdownDuringConnectClosesLateLink(t *testing.T) {
 			t.Fatal("link that came up after shutdown was not closed")
 		}
 		h.expectUnlinks(1)
-	})
-}
-
-func TestTrackerSeenWhileBrowsingDuringBackoffConnectsNow(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(t)
-		h.sup.Want(tracker)
-		h.nextScan().advertise(tracker)
-		h.nextConnect().fail(errBoom)
-		h.expectState(LinkWaiting)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		h.sup.Browse(ctx, func(Advertisement) {})
-		h.nextScan().advertise(tracker) // user's scan list sees it mid-backoff
-
-		h.nextConnect().succeed() // no clock advance needed
-		h.expectState(LinkConnected)
 	})
 }
 

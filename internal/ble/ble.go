@@ -55,7 +55,20 @@ type Scanner struct {
 	ready chan struct{} // closed when adapter.Enable() succeeds
 }
 
-func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
+// Option configures a Scanner.
+type Option func(*Scanner, *Radio)
+
+// WithRadio drives r instead of the BlueZ adapter, e.g. a fake in tests.
+// There is no adapter to enable then: Run starts at once, and
+// InitWithRetry must not be called.
+func WithRadio(r Radio) Option {
+	return func(s *Scanner, radio *Radio) {
+		*radio = r
+		close(s.ready)
+	}
+}
+
+func NewScanner(eventBus *events.Bus, logger *slog.Logger, opts ...Option) *Scanner {
 	s := &Scanner{
 		adapter:  bluetooth.DefaultAdapter,
 		eventBus: eventBus,
@@ -70,7 +83,10 @@ func NewScanner(eventBus *events.Bus, logger *slog.Logger) *Scanner {
 	}
 	s.publishFrame = func(e events.FrameStateEvent) { s.eventBus.Publish(e) }
 	s.frameSem = make(chan struct{}, 1)
-	radio := &bluezRadio{adapter: s.adapter, logger: logger}
+	var radio Radio = &bluezRadio{adapter: s.adapter, logger: logger}
+	for _, opt := range opts {
+		opt(s, &radio)
+	}
 	s.sup = NewSupervisor(radio, DefaultSupervisorConfig(), SupervisorHooks{
 		OnStatus: s.onLinkStatus,
 		OnLink:   s.onLink,

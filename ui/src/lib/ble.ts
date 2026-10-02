@@ -41,3 +41,14 @@ export function bleStatusView(status: BLEStatus | null, retryInS = 0): BLEStatus
       return { tone: "off", text: "No sensor", chosen: false, connected: false };
   }
 }
+
+export type BLEScanState = components["schemas"]["BLEScanStateEvent"];
+
+/** A line under the scan list explaining a stalled or stopped scan. */
+export function scanNote(scan: BLEScanState | null): string | null {
+  if (scan?.state === "waiting") {
+    return `Scan failed: ${scan.error ?? "unknown error"}. Retrying in ${Math.round(scan.retry_in_s ?? 0)}s.`;
+  }
+  if (scan?.state === "ended" && scan.reason === "timeout") return "Scan stopped after a minute.";
+  return null;
+}

@@ -65,7 +65,7 @@ export interface paths {
         };
         /**
          * BLE scan SSE stream
-         * @description Opening this connection starts scanning; closing it stops scanning
+         * @description Scans for nearby devices while no device is chosen. Opening this connection starts scanning; closing it stops. Ends with a scan-state 'ended' event once a device is chosen.
          */
         get: operations["ble-scan"];
         put?: never;
@@ -439,6 +439,26 @@ export interface components {
             /** Format: int64 */
             rssi: number;
             sensor_name?: string;
+            timestamp: string;
+        };
+        BLEScanStateEvent: {
+            /** @description Why the scan failed (waiting) */
+            error?: string;
+            /**
+             * @description Why the scan ended
+             * @enum {string}
+             */
+            reason?: "device-chosen" | "timeout";
+            /**
+             * Format: double
+             * @description Seconds until the scan is retried (waiting)
+             */
+            retry_in_s?: number;
+            /**
+             * @description waiting: the scan failed and is retried after a backoff; ended: the stream closes
+             * @enum {string}
+             */
+            state: "scanning" | "waiting" | "ended";
             timestamp: string;
         };
         BLEStatusEvent: {
@@ -1174,7 +1194,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": {
+                    "text/event-stream": ({
                         data: components["schemas"]["BLEScanResultEvent"];
                         /**
                          * @description The event name.
@@ -1185,7 +1205,29 @@ export interface operations {
                         id?: number;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
-                    }[];
+                    } | {
+                        data: components["schemas"]["HeartbeatEvent"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "heartbeat";
+                        /** @description The event ID. */
+                        id?: number;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    } | {
+                        data: components["schemas"]["BLEScanStateEvent"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "scan-state";
+                        /** @description The event ID. */
+                        id?: number;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    })[];
                 };
             };
             /** @description Error */

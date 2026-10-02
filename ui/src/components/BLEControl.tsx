@@ -4,7 +4,7 @@ import { SSEClient, api } from "../lib/api";
 import type { SSEStatus } from "../lib/api";
 import type { components } from "../lib/api.generated";
 import type { OBSStatus } from "../lib/obs";
-import { bleDeviceLabel, bleStatusView, type BLEStatus, type BLEStatusView, type BLETone } from "../lib/ble";
+import { bleDeviceLabel, bleStatusView, scanNote, type BLEScanState, type BLEStatus, type BLEStatusView, type BLETone } from "../lib/ble";
 
 type BLEScanResult = components["schemas"]["BLEScanResultEvent"];
 type LogEntry = components["schemas"]["LogEntry"];
@@ -89,6 +89,8 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
     new Map(),
   );
   const [scanning, setScanning] = useState(false);
+  const [scanState, setScanState] = useState<BLEScanState | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgetting, setForgetting] = useState(false);
   const [frame, setFrame] = useState<FrameState>({ enabled: false, state: "unlocked" });
@@ -122,11 +124,12 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
       setRetryAt(retryDeadline(data, t));
       if (data.status === "idle") setForgetting(false);
       // Scanning is for choosing a device; once one is chosen, stop.
-      if (data.status !== "idle" && scanSSE.current) {
-        scanSSE.current.disconnect();
+      if (data.status !== "idle") {
+        scanSSE.current?.disconnect();
         scanSSE.current = null;
         setScanning(false);
         setScanResults(new Map());
+        setScanState(null);
       }
       if (data.status === "connected") {
         onSensorChangeRef.current?.(data.sensor_name ?? null);
@@ -163,6 +166,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
   const startScan = useCallback(() => {
     if (scanSSE.current) return;
     setScanResults(new Map());
+    setScanState(null);
     setError(null);
     setScanning(true);
 
@@ -172,8 +176,18 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
         client.disconnect();
         scanSSE.current = null;
         setScanning(false);
-        setError("BLE scan failed — check adapter");
+        setError("Lost the scan connection to the server");
       },
+    });
+    client.on("scan-state", (data) => {
+      setScanState(data);
+      if (data.state !== "ended") return;
+      // The server closes the stream; stop before the client would reconnect.
+      client.disconnect();
+      scanSSE.current = null;
+      setScanning(false);
+      // Timed out: the list stays pickable. Device chosen: it's done.
+      if (data.reason !== "timeout") setScanResults(new Map());
     });
     client.on("device", (data) => {
       setScanResults((prev) => {
@@ -193,18 +207,21 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
     }
     setScanning(false);
     setScanResults(new Map());
+    setScanState(null);
   }, []);
 
+  // Choosing a device ends the scan on the server, which closes the list.
   const handleConnect = useCallback(
     async (device: { address: string; name: string }) => {
-      stopScan();
       setError(null);
+      setChoosing(true);
       const { error: err } = await api.POST("/api/ble/connect", {
         body: { address: device.address, name: device.name },
       });
+      setChoosing(false);
       if (err) setError(err.detail ?? "Connection failed");
     },
-    [stopScan],
+    [],
   );
 
   const handleToggleFrameLock = useCallback(async () => {
@@ -276,6 +293,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
   const name = status ? bleDeviceLabel(status) : "";
 
   const label = headerLabel(view, scanning, forgetting);
+  const note = scanNote(scanState);
 
   const headerContent = (
     <div className="flex items-center justify-between gap-2 w-full min-w-0">
@@ -371,6 +389,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
             <button
               key={device.address}
               className="w-full flex items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-700/50 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+              disabled={choosing}
               onClick={() => void handleConnect(device)}
             >
               <div className="min-w-0">
@@ -393,6 +412,8 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
           ))}
         </div>
       )}
+
+      {note && !view.chosen && <p className="text-xs text-slate-400">{note}</p>}
 
       {reversedLog.length > 0 && (
         <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs border-t border-slate-700 pt-3">

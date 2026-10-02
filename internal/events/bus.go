@@ -37,8 +37,6 @@ func (b *Bus) Subscribe(handler any) func() {
 		return subscribe(b, h)
 	case func(BLEStatusEvent):
 		return subscribe(b, h)
-	case func(BLEScanResultEvent):
-		return subscribe(b, h)
 	case func(ConfigChangedEvent):
 		return subscribe(b, h)
 	case func(BatteryEvent):

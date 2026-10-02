@@ -3,7 +3,6 @@ package events
 const (
 	TypeOrientation uint32 = iota + 1
 	TypeBLEStatus
-	TypeBLEScanResult
 	TypeConfigChanged
 	TypeBattery
 	TypeHeartbeat
@@ -49,17 +48,6 @@ func (e BLEStatusEvent) DisplayName() string {
 	}
 	return e.Device
 }
-
-// BLEScanResultEvent carries a single BLE scan advertisement.
-type BLEScanResultEvent struct {
-	Address    string `json:"address"`
-	Name       string `json:"name"`
-	RSSI       int    `json:"rssi"`
-	SensorName string `json:"sensor_name,omitempty"`
-	Timestamp  string `json:"timestamp"`
-}
-
-func (e BLEScanResultEvent) Type() uint32 { return TypeBLEScanResult }
 
 // ConfigChangedEvent is published when config is updated.
 type ConfigChangedEvent struct {

@@ -44,6 +44,32 @@ var ErrConnectTimeout = errors.New("connect timed out")
 // errScanEnded is reported when a scan stops without being asked to.
 var errScanEnded = errors.New("scan ended unexpectedly")
 
+// ErrDeviceChosen ends a browse: scanning for a list of devices is only for
+// choosing one.
+var ErrDeviceChosen = errors.New("a device is chosen")
+
+type ScanState string
+
+const (
+	ScanRunning ScanState = "scanning"
+	ScanWaiting ScanState = "waiting" // the scan failed; retrying after a backoff
+	ScanEnded   ScanState = "ended"   // Err says why
+)
+
+// ScanStatus reports a browse.
+type ScanStatus struct {
+	State   ScanState
+	Err     error
+	RetryIn time.Duration // when waiting
+}
+
+// Browser receives a browse's advertisements and status changes. Called
+// from the supervisor's loop; must not block.
+type Browser struct {
+	Found  func(Advertisement)
+	Status func(ScanStatus)
+}
+
 type LinkState string
 
 const (
@@ -103,13 +129,14 @@ type Supervisor struct {
 	mu         sync.Mutex
 	cfg        SupervisorConfig
 	want       string
-	browsers   map[int]func(Advertisement)
+	browsers   map[int]Browser
 	nextBrowse int
 	wake       chan struct{}
 
 	// loop-owned
 	state  LinkState
 	target string
+	seen   map[string]time.Time // last advertisement while browsing
 
 	scanCancel context.CancelFunc // running scan not yet asked to stop
 	scanLive   bool               // a Scan call has not returned (running or stopping)
@@ -137,7 +164,8 @@ func NewSupervisor(radio Radio, cfg SupervisorConfig, hooks SupervisorHooks) *Su
 		radio:     radio,
 		cfg:       cfg,
 		hooks:     hooks,
-		browsers:  make(map[int]func(Advertisement)),
+		browsers:  make(map[int]Browser),
+		seen:      make(map[string]time.Time),
 		wake:      make(chan struct{}, 1),
 		state:     LinkIdle,
 		advs:      make(chan Advertisement, 16),
@@ -175,14 +203,14 @@ func (s *Supervisor) Want(addr string) {
 	s.poke()
 }
 
-// Browse reports every advertisement to found until ctx is done. It shares
-// the supervisor's scan (BlueZ allows one discovery per client) and keeps
-// it running continuously while active. Returns immediately.
-func (s *Supervisor) Browse(ctx context.Context, found func(Advertisement)) {
+// Browse scans for nearby devices while no device is wanted, reporting
+// them to b until ctx is done. Wanting a device ends it (ScanEnded with
+// ErrDeviceChosen). Returns immediately.
+func (s *Supervisor) Browse(ctx context.Context, b Browser) {
 	s.mu.Lock()
 	id := s.nextBrowse
 	s.nextBrowse++
-	s.browsers[id] = found
+	s.browsers[id] = b
 	s.mu.Unlock()
 	s.poke()
 	go func() {
@@ -214,11 +242,13 @@ func (s *Supervisor) Run(ctx context.Context) {
 			return
 		case <-s.wake:
 		case adv := <-s.advs:
-			for _, found := range s.browserList() {
-				found(adv)
-			}
-			// Also while backing off: a browse scan may spot it early.
-			if (s.state == LinkSearching || s.state == LinkWaiting) && adv.Address == s.target {
+			switch {
+			case s.target == "":
+				s.seen[adv.Address] = time.Now()
+				for _, b := range s.browserList() {
+					b.Found(adv)
+				}
+			case s.state == LinkSearching && adv.Address == s.target:
 				s.beginConnect()
 			}
 		case err := <-s.scanDone:
@@ -232,7 +262,13 @@ func (s *Supervisor) Run(ctx context.Context) {
 			}
 			s.stopTimer()
 			s.scanHold = true
-			s.retryLater(err)
+			if s.target == "" { // a browse: the link has nothing to do with it
+				d := s.nextBackoff()
+				s.setTimer(d)
+				s.reportBrowses(ScanStatus{State: ScanWaiting, Err: err, RetryIn: d})
+			} else {
+				s.retryLater(err)
+			}
 		case <-s.closeDone:
 			s.closing--
 		case res := <-s.connDone:
@@ -271,24 +307,37 @@ func (s *Supervisor) Run(ctx context.Context) {
 				s.retryLater(ErrConnectTimeout)
 			case LinkWaiting:
 				s.scanHold = false
-				if s.target == "" {
-					s.setState(LinkIdle)
-				} else {
-					s.setState(LinkSearching)
-				}
+				s.setState(LinkSearching)
+			case LinkIdle: // browse scan backoff over
+				s.scanHold = false
+				s.reportBrowses(ScanStatus{State: ScanRunning})
 			}
 		}
 	}
 }
 
+// seenTTL is how long after an advertisement BlueZ surely still knows an
+// unpaired device (it keeps them ~30s after it stops seeing them).
+const seenTTL = 20 * time.Second
+
+func (s *Supervisor) seenRecently(addr string) bool {
+	t, ok := s.seen[addr]
+	return ok && time.Since(t) < seenTTL
+}
+
 // retryLater waits with exponential backoff before searching (or, with no
 // target, browsing) again.
 func (s *Supervisor) retryLater(err error) {
+	d := s.nextBackoff()
+	s.setTimer(d)
+	s.setStatus(LinkStatus{State: LinkWaiting, Err: err, RetryIn: d})
+}
+
+func (s *Supervisor) nextBackoff() time.Duration {
 	cfg := s.config()
 	d := max(s.backoff, cfg.BackoffMin)
 	s.backoff = min(2*d, max(cfg.BackoffMax, cfg.BackoffMin))
-	s.setTimer(d)
-	s.setStatus(LinkStatus{State: LinkWaiting, Err: err, RetryIn: d})
+	return d
 }
 
 func (s *Supervisor) setTimer(d time.Duration) {
@@ -317,31 +366,62 @@ func (s *Supervisor) timerC() <-chan time.Time {
 	return s.timer.C
 }
 
-func (s *Supervisor) browserList() []func(Advertisement) {
+func (s *Supervisor) browserList() []Browser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := make([]func(Advertisement), 0, len(s.browsers))
-	for _, f := range s.browsers {
-		list = append(list, f)
+	list := make([]Browser, 0, len(s.browsers))
+	for _, b := range s.browsers {
+		list = append(list, b)
 	}
 	return list
+}
+
+func (s *Supervisor) reportBrowses(st ScanStatus) {
+	for _, b := range s.browserList() {
+		if b.Status != nil {
+			b.Status(st)
+		}
+	}
+}
+
+// endBrowses ends every browse, as a device is wanted.
+func (s *Supervisor) endBrowses() {
+	s.mu.Lock()
+	ended := s.browsers
+	s.browsers = make(map[int]Browser)
+	s.mu.Unlock()
+	for _, b := range ended {
+		if b.Status != nil {
+			b.Status(ScanStatus{State: ScanEnded, Err: ErrDeviceChosen})
+		}
+	}
 }
 
 func (s *Supervisor) reconcile(ctx context.Context) {
 	s.mu.Lock()
 	want := s.want
-	browsing := len(s.browsers) > 0
 	s.mu.Unlock()
 
 	if want != s.target {
 		s.teardown()
 		s.target = want
-		if want == "" {
+		switch {
+		case want == "":
 			s.setState(LinkIdle)
-		} else {
+		case s.seenRecently(want) && s.connCancel == nil:
+			// Picked from the scan list: BlueZ still knows it.
+			s.beginConnect()
+		default:
 			s.setState(LinkSearching)
 		}
+		clear(s.seen)
 	}
+	if s.target != "" {
+		s.endBrowses()
+	}
+	s.mu.Lock()
+	browsing := len(s.browsers) > 0
+	s.mu.Unlock()
 	// Never scan during a connect attempt; some controllers can't do both.
 	needScan := s.connCancel == nil && !s.pendingConnect && !s.scanHold &&
 		(s.state == LinkSearching || browsing)
@@ -351,13 +431,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	case !needScan && s.scanCancel != nil:
 		s.stopScan()
 	}
-	// Bound search scans with a window, unless someone is browsing.
-	if s.state == LinkSearching && s.scanCancel != nil {
-		if browsing {
-			s.stopTimer()
-		} else if s.timer == nil {
-			s.setTimer(s.config().ScanWindow)
-		}
+	// Bound search scans with a window.
+	if s.state == LinkSearching && s.scanCancel != nil && s.timer == nil {
+		s.setTimer(s.config().ScanWindow)
 	}
 }
 

@@ -10,6 +10,10 @@ import (
 	"github.com/smazurov/pinquake/internal/events"
 )
 
+// heartbeatInterval keeps SSE clients, which give up after 20s of silence,
+// connected while nothing happens.
+const heartbeatInterval = 15 * time.Second
+
 func (s *Server) registerSSERoutes() {
 	sse.Register(s.api, huma.Operation{
 		OperationID: "events-stream",
@@ -82,7 +86,7 @@ func (s *Server) registerSSERoutes() {
 			}
 		}
 
-		ticker := time.NewTicker(15 * time.Second)
+		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 
 		for {

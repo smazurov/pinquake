@@ -1,23 +1,9 @@
 package ble
 
-import (
-	"context"
-	"time"
+import "context"
 
-	"github.com/smazurov/pinquake/internal/events"
-)
-
-// Scan publishes every advertisement as a BLEScanResultEvent until ctx is
-// done. It shares the supervisor's scan, so it works while searching for
-// the saved device.
-func (s *Scanner) Scan(ctx context.Context) {
-	s.sup.Browse(ctx, func(adv Advertisement) {
-		s.eventBus.Publish(events.BLEScanResultEvent{
-			Address:    adv.Address,
-			Name:       adv.Name,
-			RSSI:       adv.RSSI,
-			SensorName: adv.SensorName,
-			Timestamp:  time.Now().Format(time.RFC3339Nano),
-		})
-	})
+// Browse reports nearby devices to b while no device is chosen, until ctx
+// is done; see Supervisor.Browse.
+func (s *Scanner) Browse(ctx context.Context, b Browser) {
+	s.sup.Browse(ctx, b)
 }

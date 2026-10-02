@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
+	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 	"github.com/smazurov/pinquake/internal/framelock"
@@ -56,6 +58,97 @@ type FrameStateResponse struct {
 
 var bleOK = &BLEActionResponse{Body: OKBody{OK: true}}
 
+// BLEScanResultEvent carries a single BLE scan advertisement.
+type BLEScanResultEvent struct {
+	Address    string `json:"address"`
+	Name       string `json:"name"`
+	RSSI       int    `json:"rssi"`
+	SensorName string `json:"sensor_name,omitempty"`
+	Timestamp  string `json:"timestamp"`
+}
+
+// BLEScanStateEvent reports the scan behind a scan stream.
+type BLEScanStateEvent struct {
+	State     string  `json:"state" enum:"scanning,waiting,ended" doc:"waiting: the scan failed and is retried after a backoff; ended: the stream closes"`
+	Reason    string  `json:"reason,omitempty" enum:"device-chosen,timeout" doc:"Why the scan ended"`
+	Error     string  `json:"error,omitempty" doc:"Why the scan failed (waiting)"`
+	RetryInS  float64 `json:"retry_in_s,omitempty" doc:"Seconds until the scan is retried (waiting)"`
+	Timestamp string  `json:"timestamp"`
+}
+
+func scanStateEvent(st ble.ScanStatus) BLEScanStateEvent {
+	ev := BLEScanStateEvent{State: string(st.State), Timestamp: time.Now().Format(time.RFC3339Nano)}
+	switch st.State {
+	case ble.ScanWaiting:
+		ev.Error = st.Err.Error()
+		ev.RetryInS = st.RetryIn.Seconds()
+	case ble.ScanEnded:
+		ev.Reason = "device-chosen"
+	}
+	return ev
+}
+
+// offerLatest puts st in ch (cap 1), replacing a status not yet relayed,
+// so the supervisor never blocks on a stalled stream. Only the supervisor
+// loop sends.
+func offerLatest(ch chan ble.ScanStatus, st ble.ScanStatus) {
+	select {
+	case <-ch:
+	default:
+	}
+	ch <- st
+}
+
+// scanTimeout ends a scan stream, so a list left open doesn't keep the
+// radio scanning.
+const scanTimeout = time.Minute
+
+// streamScan relays one browse to a scan stream.
+func (s *Server) streamScan(ctx context.Context, _ *struct{}, send sse.Sender) {
+	ctx, cancel := context.WithTimeout(ctx, scanTimeout)
+	defer cancel()
+	advs := make(chan ble.Advertisement, 64)
+	statuses := make(chan ble.ScanStatus, 1)
+	s.scanner.Browse(ctx, ble.Browser{
+		Found: func(a ble.Advertisement) {
+			select { // never block the supervisor; the list catches up
+			case advs <- a:
+			default:
+			}
+		},
+		Status: func(st ble.ScanStatus) { offerLatest(statuses, st) },
+	})
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if err := send.Data(events.HeartbeatEvent{Timestamp: time.Now().Format(time.RFC3339Nano)}); err != nil {
+				return
+			}
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				_ = send.Data(BLEScanStateEvent{State: string(ble.ScanEnded), Reason: "timeout", Timestamp: time.Now().Format(time.RFC3339Nano)})
+			}
+			return
+		case a := <-advs:
+			if err := send.Data(BLEScanResultEvent{
+				Address:    a.Address,
+				Name:       a.Name,
+				RSSI:       a.RSSI,
+				SensorName: a.SensorName,
+				Timestamp:  time.Now().Format(time.RFC3339Nano),
+			}); err != nil {
+				return
+			}
+		case st := <-statuses:
+			if err := send.Data(scanStateEvent(st)); err != nil || st.State == ble.ScanEnded {
+				return
+			}
+		}
+	}
+}
+
 func (s *Server) registerBLERoutes() {
 	bleGrp := huma.NewGroup(s.api, "/api/ble")
 	bleGrp.UseSimpleModifier(huma.OperationTags("ble"))
@@ -65,27 +158,12 @@ func (s *Server) registerBLERoutes() {
 		Method:      http.MethodGet,
 		Path:        "/scan",
 		Summary:     "BLE scan SSE stream",
-		Description: "Opening this connection starts scanning; closing it stops scanning",
+		Description: "Scans for nearby devices while no device is chosen. Opening this connection starts scanning; closing it stops. Ends with a scan-state 'ended' event once a device is chosen.",
 	}, map[string]any{
-		"device": events.BLEScanResultEvent{},
-	}, func(ctx context.Context, _ *struct{}, send sse.Sender) {
-		s.scanner.Scan(ctx)
-
-		ch := make(chan any, 64)
-		unsub := events.SubscribeToChannel[events.BLEScanResultEvent](s.eventBus, ch)
-		defer unsub()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case event := <-ch:
-				if err := send.Data(event); err != nil {
-					return
-				}
-			}
-		}
-	})
+		"device":     BLEScanResultEvent{},
+		"scan-state": BLEScanStateEvent{},
+		"heartbeat":  events.HeartbeatEvent{},
+	}, s.streamScan)
 
 	huma.Post(bleGrp, "/connect", func(_ context.Context, input *ConnectRequest) (*BLEActionResponse, error) {
 		// Detect the sensor type on connect; a factory left over from the

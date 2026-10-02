@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bleStatusView, type BLEStatus } from "./ble";
+import { bleStatusView, scanNote, type BLEScanState, type BLEStatus } from "./ble";
 
 const at = (s: Omit<BLEStatus, "timestamp">): BLEStatus => ({ ...s, timestamp: "" });
 const DEV = { device: "EA:F0:F1:BC:59:DD", device_name: "WT901BLE68" };
@@ -31,5 +31,22 @@ describe("bleStatusView", () => {
 
   it("falls back to the address without a name", () => {
     expect(bleStatusView(at({ status: "connecting", device: DEV.device })).text).toBe(`Connecting to ${DEV.device}…`);
+  });
+});
+
+describe("scanNote", () => {
+  const scan = (s: Omit<BLEScanState, "timestamp">): BLEScanState => ({ ...s, timestamp: "" });
+
+  it("says nothing while scanning", () => {
+    expect(scanNote(scan({ state: "scanning" }))).toBeNull();
+    expect(scanNote(null)).toBeNull();
+  });
+
+  it("explains a failed scan and when it retries", () => {
+    expect(scanNote(scan({ state: "waiting", error: "adapter busy", retry_in_s: 4 }))).toBe("Scan failed: adapter busy. Retrying in 4s.");
+  });
+
+  it("says the scan stopped after the time limit", () => {
+    expect(scanNote(scan({ state: "ended", reason: "timeout" }))).toBe("Scan stopped after a minute.");
   });
 });
