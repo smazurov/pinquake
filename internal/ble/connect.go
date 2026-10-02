@@ -18,9 +18,16 @@ func (s *Scanner) SetSensorFactory(factory func() sensors.Sensor) {
 	s.sensorFactory = factory
 }
 
+// ConnectedDevice is the device a link came up to.
+type ConnectedDevice struct {
+	Addr       string
+	Name       string
+	SensorName string
+}
+
 // OnConnect sets a callback invoked (from a goroutine) after each successful
 // connection, including automatic reconnects.
-func (s *Scanner) OnConnect(fn func(sensorName string)) {
+func (s *Scanner) OnConnect(fn func(ConnectedDevice)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onConnect = fn
@@ -40,6 +47,9 @@ func (s *Scanner) Connect(addr, name string) error {
 	s.sup.Want(addr)
 	return nil
 }
+
+// Wants reports whether addr is the device to stay connected to.
+func (s *Scanner) Wants(addr string) bool { return s.sup.Wanted() == addr }
 
 // Retry searches for the wanted device now if waiting to; see
 // Supervisor.Retry.
@@ -79,7 +89,7 @@ func (s *Scanner) onLinkStatus(st LinkStatus) {
 
 	s.eventBus.Publish(ev)
 	if st.State == LinkConnected && cb != nil {
-		go cb(ev.SensorName)
+		go cb(ConnectedDevice{Addr: ev.Device, Name: ev.DeviceName, SensorName: ev.SensorName})
 	}
 }
 

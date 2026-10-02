@@ -43,7 +43,7 @@ type Scanner struct {
 	connCancel    context.CancelFunc
 	session       int // bumped per link; stale notification handlers no-op
 	swapXY        bool
-	onConnect     func(sensorName string)
+	onConnect     func(ConnectedDevice)
 
 	locker         *framelock.Locker
 	lastFrameState framelock.Status // last published, for dedup

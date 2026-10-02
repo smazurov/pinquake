@@ -96,25 +96,7 @@ func NewServer(opts *Options) *Server {
 	})
 	server.obs.Start()
 
-	opts.Scanner.OnConnect(func(sensorName string) {
-		server.configMu.Lock()
-		defer server.configMu.Unlock()
-		cfg, _ := server.loadAppConfig()
-		cfg.BLE.SensorName = sensorName
-		if err := data.SaveAll(server.configPath, cfg); err != nil {
-			slog.Error("Failed to save BLE sensor name", "error", err)
-		}
-
-		entry := sensors.FactoryByName(sensorName)
-		if entry != nil && entry.NewConfig != nil {
-			sensorCfg := server.loadSensorConfig(*entry)
-			if err := server.scanner.ApplySensorConfig(*entry, sensorCfg); err != nil {
-				server.log("error", fmt.Sprintf("Failed to apply %s config: %v", sensorName, err))
-			} else {
-				server.log("info", fmt.Sprintf("Applied %s sensor config", sensorName))
-			}
-		}
-	})
+	opts.Scanner.OnConnect(server.onBLEConnect)
 
 	opts.EventBus.Subscribe(func(e events.VizTriggerEvent) {
 		server.overlay.SetTrigger(e.Visible)
@@ -157,6 +139,33 @@ func (s *Server) Start(addr string) error {
 		Handler: s.mux,
 	}
 	return s.httpServer.ListenAndServe()
+}
+
+// onBLEConnect saves the device a link came up to, so it is reconnected
+// after a restart, and applies its sensor config.
+func (s *Server) onBLEConnect(d ble.ConnectedDevice) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	// Runs after the fact: the device may have been forgotten since. The
+	// disconnect handler forgets it before taking configMu.
+	if !s.scanner.Wants(d.Addr) {
+		return
+	}
+	cfg, _ := s.loadAppConfig()
+	cfg.BLE = data.BLEConfig{DeviceAddress: d.Addr, DeviceName: d.Name, SensorName: d.SensorName}
+	if err := data.SaveAll(s.configPath, cfg); err != nil {
+		slog.Error("Failed to save BLE device", "error", err)
+	}
+
+	entry := sensors.FactoryByName(d.SensorName)
+	if entry != nil && entry.NewConfig != nil {
+		sensorCfg := s.loadSensorConfig(*entry)
+		if err := s.scanner.ApplySensorConfig(*entry, sensorCfg); err != nil {
+			s.log("error", fmt.Sprintf("Failed to apply %s config: %v", d.SensorName, err))
+		} else {
+			s.log("info", fmt.Sprintf("Applied %s sensor config", d.SensorName))
+		}
+	}
 }
 
 // bleStatusLogger logs BLE link transitions. The search duty cycle (not

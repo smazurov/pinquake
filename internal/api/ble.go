@@ -169,10 +169,11 @@ func (s *Server) registerBLERoutes() {
 		// Detect the sensor type on connect; a factory left over from the
 		// previously saved device may not match this one.
 		s.scanner.SetSensorFactory(nil)
+		// Saved once it connects (see OnConnect), so a wrong pick isn't
+		// retried after every restart.
 		if err := s.scanner.Connect(input.Body.Address, input.Body.Name); err != nil {
 			return nil, huma.Error422UnprocessableEntity(fmt.Sprintf("cannot connect: %v", err))
 		}
-		s.updateBLEDevice(input.Body.Address, input.Body.Name)
 		return bleOK, nil
 	})
 

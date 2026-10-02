@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/smazurov/pinquake/internal/ble"
+	"github.com/smazurov/pinquake/internal/data"
 	"github.com/smazurov/pinquake/internal/events"
 )
 
@@ -287,5 +288,45 @@ func TestRetryEndpointSearchesNow(t *testing.T) {
 			t.Fatalf("retry: %d %v", code, body)
 		}
 		radio.nextScan(t)
+	})
+}
+
+func TestChosenDeviceIsNotSavedBeforeItConnects(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, radio := newScanTestServer(t)
+		if code, body := call(t, s, http.MethodPost, "/api/ble/connect", `{"address":"`+sensorAddr+`","name":"WT901BLE68"}`); code != http.StatusOK {
+			t.Fatalf("connect: %d %v", code, body)
+		}
+		radio.nextScan(t) // searching
+		cfg, _ := data.LoadFromPath(s.configPath)
+		if cfg.BLE.DeviceAddress != "" {
+			t.Fatalf("saved %q before it ever connected; a wrong pick would be retried after every restart", cfg.BLE.DeviceAddress)
+		}
+	})
+}
+
+func TestConnectedDeviceIsSaved(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := newScanTestServer(t)
+		call(t, s, http.MethodPost, "/api/ble/connect", `{"address":"`+sensorAddr+`","name":"WT901BLE68"}`)
+		s.onBLEConnect(ble.ConnectedDevice{Addr: sensorAddr, Name: "WT901BLE68", SensorName: "WT901"})
+		cfg, _ := data.LoadFromPath(s.configPath)
+		want := data.BLEConfig{DeviceAddress: sensorAddr, DeviceName: "WT901BLE68", SensorName: "WT901"}
+		if cfg.BLE != want {
+			t.Fatalf("saved %+v, want %+v", cfg.BLE, want)
+		}
+	})
+}
+
+func TestForgottenDeviceStaysForgottenWhenItsConnectReportsLate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := newScanTestServer(t)
+		call(t, s, http.MethodPost, "/api/ble/connect", `{"address":"`+sensorAddr+`","name":"WT901BLE68"}`)
+		call(t, s, http.MethodPost, "/api/ble/disconnect", "")
+		s.onBLEConnect(ble.ConnectedDevice{Addr: sensorAddr, Name: "WT901BLE68"}) // reported just before the Forget
+		cfg, _ := data.LoadFromPath(s.configPath)
+		if cfg.BLE.DeviceAddress != "" {
+			t.Fatalf("forgotten device saved again: %+v", cfg.BLE)
+		}
 	})
 }

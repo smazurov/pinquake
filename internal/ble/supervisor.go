@@ -223,6 +223,13 @@ func (s *Supervisor) Browse(ctx context.Context, b Browser) {
 	}()
 }
 
+// Wanted returns the device set by Want.
+func (s *Supervisor) Wanted() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.want
+}
+
 // Retry ends a backoff: while waiting to search again, search now, with
 // the backoff starting over. Does nothing in other states.
 func (s *Supervisor) Retry() {

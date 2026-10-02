@@ -72,3 +72,24 @@ func TestStatusEventCountsDownRetry(t *testing.T) {
 		}
 	})
 }
+
+func TestOnConnectReportsTheDevice(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestScanner()
+		got := make(chan ConnectedDevice, 1)
+		s.OnConnect(func(d ConnectedDevice) { got <- d })
+		if err := s.Connect(tracker, "WT901BLE68"); err != nil {
+			t.Fatal(err)
+		}
+		s.onLinkStatus(LinkStatus{State: LinkConnected, Addr: tracker})
+		synctest.Wait()
+		select {
+		case d := <-got:
+			if want := (ConnectedDevice{Addr: tracker, Name: "WT901BLE68"}); d != want {
+				t.Fatalf("got %+v, want %+v", d, want)
+			}
+		default:
+			t.Fatal("OnConnect not called")
+		}
+	})
+}
