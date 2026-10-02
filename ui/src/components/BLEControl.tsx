@@ -244,6 +244,12 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
     }
   }, []);
 
+  const handleRetry = useCallback(async () => {
+    setError(null);
+    const { error: err } = await api.POST("/api/ble/retry");
+    if (err) setError(err.detail ?? "Retry failed");
+  }, []);
+
   useEffect(() => {
     if (retryAt === null) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -355,6 +361,15 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
             title="Stop scan"
           >
             <NoSymbolIcon className={ICON_CLS} />
+          </button>
+        )}
+        {status?.status === "waiting" && !forgetting && (
+          <button
+            onClick={(e) => { e.stopPropagation(); void handleRetry(); }}
+            className="text-blue-400 hover:text-blue-300 transition-colors"
+            title={`Search for ${name} now`}
+          >
+            <ArrowPathIcon className={ICON_CLS} />
           </button>
         )}
         {view.chosen && (

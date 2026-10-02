@@ -129,6 +129,7 @@ type Supervisor struct {
 	mu         sync.Mutex
 	cfg        SupervisorConfig
 	want       string
+	retry      bool // Retry was called
 	browsers   map[int]Browser
 	nextBrowse int
 	wake       chan struct{}
@@ -220,6 +221,15 @@ func (s *Supervisor) Browse(ctx context.Context, b Browser) {
 		s.mu.Unlock()
 		s.poke()
 	}()
+}
+
+// Retry ends a backoff: while waiting to search again, search now, with
+// the backoff starting over. Does nothing in other states.
+func (s *Supervisor) Retry() {
+	s.mu.Lock()
+	s.retry = true
+	s.mu.Unlock()
+	s.poke()
 }
 
 // Forget drops the wanted device: closes the link or stops searching.
@@ -399,9 +409,16 @@ func (s *Supervisor) endBrowses() {
 
 func (s *Supervisor) reconcile(ctx context.Context) {
 	s.mu.Lock()
-	want := s.want
+	want, retry := s.want, s.retry
+	s.retry = false
 	s.mu.Unlock()
 
+	if retry && want == s.target && s.state == LinkWaiting {
+		s.stopTimer()
+		s.backoff = 0
+		s.scanHold = false
+		s.setState(LinkSearching)
+	}
 	if want != s.target {
 		s.teardown()
 		s.target = want

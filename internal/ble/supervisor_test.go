@@ -721,6 +721,27 @@ func TestBrowseScanErrorBacksOff(t *testing.T) {
 	})
 }
 
+func TestRetryWhileWaitingSearchesNow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.sup.Want(tracker)
+		h.nextScan()
+		h.advance(10 * time.Second) // not found: wait 2s
+		h.advance(2 * time.Second)
+		h.nextScan()
+		h.advance(10 * time.Second) // not found again: wait 4s
+		h.expectState(LinkWaiting)
+
+		h.sup.Retry()
+		h.expectState(LinkSearching)
+		h.nextScan() // no waiting out the backoff
+		h.advance(10 * time.Second)
+		if st := h.expectState(LinkWaiting); st.RetryIn != 2*time.Second {
+			t.Fatalf("retryIn = %v after a retry, want the backoff reset to 2s", st.RetryIn)
+		}
+	})
+}
+
 func TestHungConnectTimesOut(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)

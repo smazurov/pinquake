@@ -272,3 +272,20 @@ func TestScanStreamsEachGetEveryDeviceOnce(t *testing.T) {
 		}
 	})
 }
+
+func TestRetryEndpointSearchesNow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, radio := newScanTestServer(t)
+		if code, body := call(t, s, http.MethodPost, "/api/ble/connect", `{"address":"`+sensorAddr+`","name":"WT901BLE68"}`); code != http.StatusOK {
+			t.Fatalf("connect: %d %v", code, body)
+		}
+		radio.nextScan(t)
+		time.Sleep(10 * time.Second) // not found: backing off
+		radio.noScan(t)
+
+		if code, body := call(t, s, http.MethodPost, "/api/ble/retry", ""); code != http.StatusOK {
+			t.Fatalf("retry: %d %v", code, body)
+		}
+		radio.nextScan(t)
+	})
+}

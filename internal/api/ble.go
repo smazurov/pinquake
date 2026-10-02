@@ -176,6 +176,14 @@ func (s *Server) registerBLERoutes() {
 		return bleOK, nil
 	})
 
+	huma.Post(bleGrp, "/retry", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
+		s.scanner.Retry()
+		return bleOK, nil
+	}, func(o *huma.Operation) {
+		o.Summary = "Search for the chosen device now"
+		o.Description = "Ends the backoff after a failed search or connect. Does nothing in other states."
+	})
+
 	huma.Post(bleGrp, "/disconnect", func(_ context.Context, _ *struct{}) (*BLEActionResponse, error) {
 		s.scanner.Disconnect()
 		s.updateBLEDevice("", "")

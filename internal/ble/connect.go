@@ -41,6 +41,10 @@ func (s *Scanner) Connect(addr, name string) error {
 	return nil
 }
 
+// Retry searches for the wanted device now if waiting to; see
+// Supervisor.Retry.
+func (s *Scanner) Retry() { s.sup.Retry() }
+
 // Disconnect forgets the wanted device: closes the link or stops searching.
 func (s *Scanner) Disconnect() {
 	s.sup.Forget()
