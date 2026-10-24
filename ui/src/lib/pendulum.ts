@@ -43,3 +43,14 @@ export function stepPendulum(
 export function createState(): PendulumState {
   return { theta: 0, omega: 0 };
 }
+
+/**
+ * Soft-limit a radius normalized to the ring (1 = ring edge). Identity up to
+ * `knee`, then eases asymptotically toward 1 with matched slope at the knee,
+ * so motion stays linear until close to the edge and never crosses it.
+ */
+export function softLimitRadius(r: number, knee: number): number {
+  if (r <= knee) return r;
+  const span = 1 - knee;
+  return knee + span * Math.tanh((r - knee) / span);
+}

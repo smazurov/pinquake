@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { computeColorScale } from "../lib/crosshair";
-import { stepPendulum, createState, type PendulumState, type PendulumParams } from "../lib/pendulum";
+import { stepPendulum, createState, softLimitRadius, type PendulumState, type PendulumParams } from "../lib/pendulum";
 
 const FRAME_INTERVAL = 1000 / 60;
 const PHYSICS_SUBSTEPS = 2;
@@ -8,6 +8,7 @@ const PHYSICS_DT = FRAME_INTERVAL / 1000 / PHYSICS_SUBSTEPS;
 const G_TO_MS2 = 9.81;
 const RING_STROKE = "rgba(180, 180, 190, 0.35)";
 const BOB_RADIUS = 10;
+const RING_KNEE = 0.85; // fraction of ring radius where the squash starts
 
 export interface PlumbBobHandle {
   pushSample: (x: number, y: number) => void;
@@ -94,14 +95,17 @@ const PlumbBob = forwardRef<PlumbBobHandle, PlumbBobProps>(function PlumbBob(
     const maxAngle = (config.forceRedG * 1.5 * G_TO_MS2) / G_TO_MS2; // in radians (≈ forceRedG * 1.5)
     const scale = ringRadius / Math.sin(maxAngle > 0 ? maxAngle : 0.15);
 
-    const bobX = cx + scale * Math.sin(stateXRef.current.theta);
-    const bobY = cy - scale * Math.sin(stateYRef.current.theta);
+    const dx = scale * Math.sin(stateXRef.current.theta);
+    const dy = -scale * Math.sin(stateYRef.current.theta);
+    const rawNorm = Math.hypot(dx, dy) / ringRadius;
 
-    // Radial distance for color
-    const dx = bobX - cx;
-    const dy = bobY - cy;
-    const radialDist = Math.sqrt(dx * dx + dy * dy);
-    const radialNorm = Math.min(radialDist / ringRadius, 1);
+    // Free swing inside the knee, squashed toward (never past) the ring beyond it
+    const squash = rawNorm > 0 ? softLimitRadius(rawNorm, RING_KNEE) / rawNorm : 1;
+    const bobX = cx + dx * squash;
+    const bobY = cy + dy * squash;
+
+    // Color tracks the unsquashed force
+    const radialNorm = Math.min(rawNorm, 1);
 
     const colorScale = computeColorScale(config.forceYellowG, config.forceRedG);
     const bobColor = colorScale(radialNorm);
