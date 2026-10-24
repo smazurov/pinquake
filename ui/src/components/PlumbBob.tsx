@@ -8,7 +8,8 @@ const PHYSICS_DT = FRAME_INTERVAL / 1000 / PHYSICS_SUBSTEPS;
 const G_TO_MS2 = 9.81;
 const RING_STROKE = "rgba(180, 180, 190, 0.35)";
 const BOB_RADIUS = 10;
-const RING_KNEE = 0.85; // fraction of ring radius where the squash starts
+const RING_LINE_WIDTH = 2;
+const RING_KNEE = 0.85; // fraction of the bob's travel limit where the squash starts
 
 export interface PlumbBobHandle {
   pushSample: (x: number, y: number) => void;
@@ -84,7 +85,7 @@ const PlumbBob = forwardRef<PlumbBobHandle, PlumbBobProps>(function PlumbBob(
 
     // Ring
     ctx.strokeStyle = RING_STROKE;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = RING_LINE_WIDTH;
     ctx.beginPath();
     ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
     ctx.stroke();
@@ -97,10 +98,13 @@ const PlumbBob = forwardRef<PlumbBobHandle, PlumbBobProps>(function PlumbBob(
 
     const dx = scale * Math.sin(stateXRef.current.theta);
     const dy = -scale * Math.sin(stateYRef.current.theta);
-    const rawNorm = Math.hypot(dx, dy) / ringRadius;
+    const rawDist = Math.hypot(dx, dy);
+    const rawNorm = rawDist / ringRadius;
 
-    // Free swing inside the knee, squashed toward (never past) the ring beyond it
-    const squash = rawNorm > 0 ? softLimitRadius(rawNorm, RING_KNEE) / rawNorm : 1;
+    // Free swing inside the knee, squashed beyond it so the bob never touches the ring
+    const limitRadius = ringRadius - BOB_RADIUS - RING_LINE_WIDTH / 2;
+    const limitNorm = rawDist / limitRadius;
+    const squash = limitNorm > 0 ? softLimitRadius(limitNorm, RING_KNEE) / limitNorm : 1;
     const bobX = cx + dx * squash;
     const bobY = cy + dy * squash;
 
