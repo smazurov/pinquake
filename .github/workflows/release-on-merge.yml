@@ -1,0 +1,70 @@
+name: Release on merge
+
+# Merging a PR labelled release:patch, release:minor or release:major tags the
+# merge commit with the next version and dispatches the Build workflow on that
+# tag. Tags pushed with GITHUB_TOKEN don't trigger workflows, so the dispatch
+# is what starts the release.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: release-on-merge
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag & release
+    if: >-
+      github.event.pull_request.merged == true && (
+        contains(github.event.pull_request.labels.*.name, 'release:patch') ||
+        contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+        contains(github.event.pull_request.labels.*.name, 'release:major'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          case " $LABELS " in
+            *" release:major "*) BUMP=major ;;
+            *" release:minor "*) BUMP=minor ;;
+            *) BUMP=patch ;;
+          esac
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+          IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST:-v0.0.0}"
+          MAJOR=${MAJOR#v}
+          case "$BUMP" in
+            major) TAG="v$((MAJOR + 1)).0.0" ;;
+            minor) TAG="v${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+          echo "Bumping ${LATEST:-none} -> $TAG ($BUMP)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Push tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Dispatch Build on tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
