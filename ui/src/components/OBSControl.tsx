@@ -198,9 +198,11 @@ export default function OBSControl({ config, status }: Readonly<{ config: OBSCon
             <ArrowPathIcon className="h-[18px] w-[18px]" />
           </button>
         </div>
-        <p className="text-xs text-slate-500">
-          Keep &quot;Shutdown source when not visible&quot; off on PinQuake browser sources so they don&apos;t reload on every trigger.
-        </p>
+        {status?.state === "active" && status.browser_warning && (
+          <p role="alert" className="text-xs text-amber-300 whitespace-pre-line">
+            {status.browser_warning}
+          </p>
+        )}
       </div>
     </Collapsible>
   );

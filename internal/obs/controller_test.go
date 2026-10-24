@@ -2,6 +2,7 @@ package obs
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -11,13 +12,20 @@ import (
 
 // fakeOBS is an in-memory OBS: scenes plus a record of SetItemEnabled calls.
 type fakeOBS struct {
-	mu      sync.Mutex
-	scenes  []Scene
-	dialErr error
-	pingErr error
-	dials   int
-	calls   []toggle
-	conn    *fakeConn
+	mu              sync.Mutex
+	scenes          []Scene
+	settings        map[string]map[string]any
+	settingsErr     error
+	settingsOpenErr error
+	settingsClosed  int
+	settingsStarted chan struct{}
+	settingsRelease <-chan struct{}
+	settingsCalls   int
+	dialErr         error
+	pingErr         error
+	dials           int
+	calls           []toggle
+	conn            *fakeConn
 }
 
 type toggle struct {
@@ -64,6 +72,38 @@ func (c *fakeConn) Scenes() ([]Scene, error) {
 	c.obs.mu.Lock()
 	defer c.obs.mu.Unlock()
 	return slices.Clone(c.obs.scenes), nil
+}
+
+func (c *fakeConn) OpenInputSettings() (InputSettingsConn, error) {
+	c.obs.mu.Lock()
+	defer c.obs.mu.Unlock()
+	if c.obs.settingsOpenErr != nil {
+		return nil, c.obs.settingsOpenErr
+	}
+	return &fakeInputSettings{obs: c.obs}, nil
+}
+
+type fakeInputSettings struct{ obs *fakeOBS }
+
+func (c *fakeInputSettings) Close() error {
+	c.obs.mu.Lock()
+	defer c.obs.mu.Unlock()
+	c.obs.settingsClosed++
+	return nil
+}
+
+func (c *fakeInputSettings) InputSettings(item Item) (map[string]any, error) {
+	c.obs.mu.Lock()
+	settings, err := maps.Clone(c.obs.settings[item.UUID]), c.obs.settingsErr
+	started, release := c.obs.settingsStarted, c.obs.settingsRelease
+	c.obs.settingsStarted = nil
+	c.obs.settingsCalls++
+	c.obs.mu.Unlock()
+	if started != nil {
+		close(started)
+		<-release
+	}
+	return settings, err
 }
 
 func (c *fakeConn) SetItemEnabled(scene string, item int, enabled bool) error {
@@ -340,6 +380,97 @@ func TestStopLeavesTargetAlone(t *testing.T) {
 		expectToggles(t, fake, toggle{"scene-main", 7, false})
 		if !fake.conn.closed {
 			t.Error("connection not closed")
+		}
+	})
+}
+
+func TestBrowserWarningTracksSettingsAndClearsWhenFixed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, fake, statuses := newTestController(t)
+		fake.set(func(f *fakeOBS) {
+			f.settings = map[string]map[string]any{
+				"src-waveform": {"url": "http://localhost:8091/canvas", "shutdown": true},
+			}
+		})
+		c.SetTarget(overlays)
+		c.Connect("localhost:4455", "")
+		expectState(t, c, StateActive)
+		if c.Status().BrowserWarning == "" {
+			t.Fatal("expected warning for shutdown-on-hide")
+		}
+		before := len(*statuses)
+		fake.set(func(f *fakeOBS) {
+			f.settings["src-waveform"]["shutdown"] = false
+			f.conn.changed <- struct{}{}
+		})
+		expectState(t, c, StateActive)
+		if c.Status().BrowserWarning != "" {
+			t.Errorf("warning did not clear after fixing OBS: %q", c.Status().BrowserWarning)
+		}
+		if len(*statuses) != before+1 {
+			t.Error("fixing settings should publish a new status")
+		}
+		expectToggles(t, fake, toggle{"scene-main", 7, false})
+
+		fake.set(func(f *fakeOBS) {
+			f.settings["src-waveform"]["restart_when_active"] = true
+			f.conn.changed <- struct{}{}
+		})
+		expectState(t, c, StateActive)
+		if c.Status().BrowserWarning == "" {
+			t.Fatal("expected warning for refresh-on-activation")
+		}
+		c.SetTarget(Target{})
+		expectState(t, c, StateConnected)
+		if c.Status().BrowserWarning != "" {
+			t.Error("warning should clear when no target is selected")
+		}
+	})
+}
+
+func TestBrowserWarningFailureDoesNotInterruptVisibility(t *testing.T) {
+	for _, failure := range []string{"connect", "read"} {
+		t.Run(failure, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c, fake, _ := newTestController(t)
+				fake.set(func(f *fakeOBS) {
+					if failure == "connect" {
+						f.settingsOpenErr = errors.New("connection failed")
+					} else {
+						f.settingsErr = errors.New("request failed")
+					}
+				})
+				c.SetTarget(overlays)
+				c.Connect("localhost:4455", "")
+				expectState(t, c, StateActive)
+				c.SetVisible(true)
+				expectToggles(t, fake, toggle{"scene-main", 7, false}, toggle{"scene-main", 7, true})
+				if c.Status().BrowserWarning != "" {
+					t.Error("should not warn without a confirmed bad setting")
+				}
+			})
+		})
+	}
+}
+
+func TestBrowserWarningClearsAfterDisconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, fake, _ := newTestController(t)
+		fake.set(func(f *fakeOBS) {
+			f.settings = map[string]map[string]any{
+				"src-waveform": {"url": "http://localhost:8091/canvas", "shutdown": true},
+			}
+		})
+		c.SetTarget(overlays)
+		c.Connect("localhost:4455", "")
+		expectState(t, c, StateActive)
+		if c.Status().BrowserWarning == "" {
+			t.Fatal("expected browser warning")
+		}
+		c.Disconnect()
+		expectState(t, c, StateOff)
+		if c.Status().BrowserWarning != "" {
+			t.Error("warning should clear after disconnecting")
 		}
 	})
 }

@@ -161,13 +161,14 @@ func setOBSTarget(c *data.OBSConfig, t obs.Target) {
 
 func obsStatusEvent(st obs.Status) events.OBSStatusEvent {
 	return events.OBSStatusEvent{
-		State:         string(st.State),
-		Server:        st.Server,
-		OBSVersion:    st.Version,
-		Error:         st.Error,
-		RetryInS:      st.RetryIn.Seconds(),
-		Target:        st.Target.Label(),
-		TargetMissing: st.TargetMissing,
-		Timestamp:     time.Now().Format(time.RFC3339Nano),
+		State:          string(st.State),
+		Server:         st.Server,
+		OBSVersion:     st.Version,
+		Error:          st.Error,
+		RetryInS:       st.RetryIn.Seconds(),
+		Target:         st.Target.Label(),
+		TargetMissing:  st.TargetMissing,
+		BrowserWarning: st.BrowserWarning,
+		Timestamp:      time.Now().Format(time.RFC3339Nano),
 	}
 }
