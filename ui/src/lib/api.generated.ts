@@ -853,6 +853,8 @@ export interface components {
              * @example https://example.com/schemas/OBSStatusEvent.json
              */
             readonly $schema?: string;
+            /** @description Misconfigured PinQuake browser sources under the target; empty when no warning is needed */
+            browser_warning?: string;
             /** @description Why the last attempt failed */
             error?: string;
             obs_version?: string;

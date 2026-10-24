@@ -19,13 +19,14 @@ const (
 )
 
 type Status struct {
-	State         State
-	Server        string
-	Version       string // OBS version, while connected
-	Error         string // why we are waiting
-	RetryIn       time.Duration
-	Target        Target // configured target; current names once resolved
-	TargetMissing bool
+	State          State
+	Server         string
+	Version        string // OBS version, while connected
+	Error          string // why we are waiting
+	RetryIn        time.Duration
+	Target         Target // configured target; current names once resolved
+	TargetMissing  bool
+	BrowserWarning string // non-empty only for confirmed misconfigured PinQuake sources
 }
 
 var (
@@ -50,30 +51,34 @@ type Options struct {
 // the trigger's visibility onto the target scene item. All session state is
 // owned by one goroutine; the public methods run their work on it.
 type Controller struct {
-	opts    Options
-	cmds    chan func()
-	kick    chan struct{}
-	desired atomic.Bool
-	stop    chan struct{}
-	stopped sync.Once
-	wg      sync.WaitGroup
+	opts           Options
+	cmds           chan func()
+	kick           chan struct{}
+	browserJobs    chan *browserCheck
+	browserResults chan browserCheckResult
+	desired        atomic.Bool
+	stop           chan struct{}
+	stopped        sync.Once
+	wg             sync.WaitGroup
 
 	statusMu sync.Mutex
 	status   Status
 
 	// Owned by the run goroutine.
-	want     bool
-	server   string
-	password string
-	target   Target
-	conn     Conn
-	resolved bool // target found in OBS; itemID and target.SceneUUID are valid
-	itemID   int
-	sent     bool // last visibility sent to OBS, valid while sentOK
-	sentOK   bool
-	backoff  time.Duration
-	retry    *time.Timer
-	ping     *time.Ticker
+	want           bool
+	server         string
+	password       string
+	target         Target
+	conn           Conn
+	resolved       bool // target found in OBS; itemID and target.SceneUUID are valid
+	itemID         int
+	browserWarning string
+	browserCheck   *browserCheck
+	sent           bool // last visibility sent to OBS, valid while sentOK
+	sentOK         bool
+	backoff        time.Duration
+	retry          *time.Timer
+	ping           *time.Ticker
 }
 
 func NewController(opts Options) *Controller {
@@ -87,17 +92,20 @@ func NewController(opts Options) *Controller {
 		opts.BackoffMax = max(30*time.Second, opts.BackoffMin)
 	}
 	return &Controller{
-		opts:   opts,
-		cmds:   make(chan func()),
-		kick:   make(chan struct{}, 1),
-		stop:   make(chan struct{}),
-		status: Status{State: StateOff},
+		opts:           opts,
+		cmds:           make(chan func()),
+		kick:           make(chan struct{}, 1),
+		browserJobs:    make(chan *browserCheck, 1),
+		browserResults: make(chan browserCheckResult),
+		stop:           make(chan struct{}),
+		status:         Status{State: StateOff},
 	}
 }
 
 func (c *Controller) Start() {
-	c.wg.Add(1)
+	c.wg.Add(2)
 	go c.run()
+	go c.runBrowserChecks()
 }
 
 // Stop ends the session without touching the target, so whatever OBS shows
@@ -186,6 +194,11 @@ func (c *Controller) run() {
 			f()
 		case <-c.kick:
 			c.apply()
+		case result := <-c.browserResults:
+			if result.check == c.browserCheck {
+				c.browserWarning = result.warning
+				c.report(StateActive, nil)
+			}
 		case <-changed:
 			c.resolve()
 		case <-done:
@@ -253,12 +266,14 @@ func (c *Controller) dial() {
 }
 
 // resolve finds the target in OBS and, once found, syncs it and reports
-// active. Runs on connect, target change, and OBS scene changes.
+// active. Runs on connect, target change, and OBS scene or input settings changes.
 func (c *Controller) resolve() {
+	c.cancelBrowserCheck()
 	if c.conn == nil {
 		return
 	}
 	if c.target.IsZero() {
+		c.browserWarning = ""
 		c.resolved = false
 		c.report(StateConnected, nil)
 		return
@@ -270,6 +285,7 @@ func (c *Controller) resolve() {
 	}
 	t, id, ok := Resolve(scenes, c.target)
 	if !ok {
+		c.browserWarning = ""
 		c.resolved = false
 		c.reportMissing()
 		return
@@ -288,6 +304,7 @@ func (c *Controller) resolve() {
 	// target is still showing a stale state.
 	if c.apply() {
 		c.report(StateActive, nil)
+		c.queueBrowserCheck(scenes)
 	}
 }
 
@@ -311,6 +328,8 @@ func (c *Controller) apply() bool {
 
 // release shows the target again so it no longer depends on the trigger.
 func (c *Controller) release() {
+	c.cancelBrowserCheck()
+	c.browserWarning = ""
 	showing := c.sentOK && c.sent
 	if c.conn != nil && c.resolved && !showing {
 		_ = c.conn.SetItemEnabled(c.target.SceneUUID, c.itemID, true)
@@ -334,6 +353,8 @@ func (c *Controller) waitRetry(err error) {
 }
 
 func (c *Controller) closeConn() {
+	c.cancelBrowserCheck()
+	c.browserWarning = ""
 	if c.conn == nil {
 		return
 	}
@@ -358,6 +379,9 @@ func (c *Controller) report(state State, err error) {
 	if err != nil {
 		st.Error = err.Error()
 		st.RetryIn = c.backoff
+	}
+	if state == StateActive {
+		st.BrowserWarning = c.browserWarning
 	}
 	c.setStatus(st)
 }

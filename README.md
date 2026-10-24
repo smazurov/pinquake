@@ -38,7 +38,7 @@ By default the overlays hide themselves when the trigger fades. PinQuake can ins
 2. In the **OBS** panel on the config page, enter the server (`localhost:4455`) and the password if authentication is on, then **Connect**.
 3. Pick the source or group to show and hide.
 
-While connected, the overlays stay drawn and OBS hides the target. If OBS goes away, they hide themselves again until it's back. The password is stored in plaintext in `config.toml`. Keep **Shutdown source when not visible** off on PinQuake browser sources so they don't reload on every trigger.
+While connected, the overlays stay drawn and OBS hides the target. If OBS goes away, they hide themselves again until it's back. The password is stored in plaintext in `config.toml`. Keep **Shutdown source when not visible** and **Refresh browser when scene becomes active** off on PinQuake browser sources so they don't reload on every trigger. The OBS panel warns only when either setting is enabled on a PinQuake browser source under the selected target, including inside groups or nested scenes.
 
 ## Local development
 

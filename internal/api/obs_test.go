@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/smazurov/pinquake/internal/ble"
 	"github.com/smazurov/pinquake/internal/data"
@@ -19,8 +20,10 @@ import (
 
 // fakeOBSConn is one OBS scene, "Main", holding a group "Overlays" (id 7).
 type fakeOBSConn struct {
-	mu      sync.Mutex
-	toggles []bool
+	mu       sync.Mutex
+	toggles  []bool
+	scenes   []obs.Scene
+	settings map[string]map[string]any
 }
 
 func (c *fakeOBSConn) Version() string          { return "32.2.2" }
@@ -30,9 +33,20 @@ func (c *fakeOBSConn) Ping() error              { return nil }
 func (c *fakeOBSConn) Close() error             { return nil }
 
 func (c *fakeOBSConn) Scenes() ([]obs.Scene, error) {
+	if c.scenes != nil {
+		return c.scenes, nil
+	}
 	return []obs.Scene{{Name: "Main", UUID: "scene-main", Items: []obs.Item{
 		{ID: 7, Name: "Overlays", UUID: "src-overlays", IsGroup: true},
 	}}}, nil
+}
+
+func (c *fakeOBSConn) OpenInputSettings() (obs.InputSettingsConn, error) { return c, nil }
+
+func (c *fakeOBSConn) InputSettings(item obs.Item) (map[string]any, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.settings[item.UUID], nil
 }
 
 func (c *fakeOBSConn) SetItemEnabled(_ string, _ int, enabled bool) error {
@@ -134,6 +148,39 @@ func TestOBSConnectPickTargetDisconnect(t *testing.T) {
 	if code != http.StatusConflict {
 		t.Errorf("scenes while disconnected: %d, want 409", code)
 	}
+}
+
+func TestOBSStatusIncludesOnlyConfirmedBrowserWarnings(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _, conn, _ := newOBSTestServer(t)
+		conn.scenes = []obs.Scene{
+			{Name: "Main", UUID: "scene-main", Items: []obs.Item{
+				{ID: 7, Name: "Overlays", UUID: "src-overlays", IsGroup: true},
+			}},
+			{Name: "Overlays", UUID: "src-overlays", IsGroup: true, Items: []obs.Item{
+				{ID: 2, Name: "Waveform", UUID: "src-waveform", Kind: "browser_source"},
+			}},
+		}
+		conn.settings = map[string]map[string]any{
+			"src-waveform": {"url": "http://localhost:8091/canvas", "shutdown": true},
+		}
+		call(t, s, http.MethodPost, "/api/obs/connect", `{"server":"localhost:4455"}`)
+		code, body := call(t, s, http.MethodPut, "/api/obs/target",
+			`{"scene":"Main","scene_uuid":"scene-main","source":"Overlays","source_uuid":"src-overlays"}`)
+		if code != http.StatusOK || body["state"] != "active" {
+			t.Fatalf("target: %d %v, want active", code, body)
+		}
+		synctest.Wait() // Browser diagnostics arrive independently of target activation.
+		code, body = call(t, s, http.MethodGet, "/api/obs/status", "")
+		warning, _ := body["browser_warning"].(string)
+		if code != http.StatusOK || !strings.Contains(warning, "Waveform") {
+			t.Fatalf("status: %d %v, want named browser warning", code, body)
+		}
+		code, body = call(t, s, http.MethodPost, "/api/obs/disconnect", "")
+		if code != http.StatusOK || body["browser_warning"] != nil {
+			t.Fatalf("disconnected: %d %v, want no browser warning field", code, body)
+		}
+	})
 }
 
 func TestOBSConnectRequiresServer(t *testing.T) {

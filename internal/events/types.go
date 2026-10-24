@@ -127,14 +127,15 @@ func (e OverlayVisibilityEvent) Type() uint32 { return TypeOverlayVisibility }
 
 // OBSStatusEvent reports the obs-websocket session.
 type OBSStatusEvent struct {
-	State         string  `json:"state" enum:"off,connecting,waiting,connected,active"`
-	Server        string  `json:"server,omitempty"`
-	OBSVersion    string  `json:"obs_version,omitempty"`
-	Error         string  `json:"error,omitempty" doc:"Why the last attempt failed"`
-	RetryInS      float64 `json:"retry_in_s,omitempty" doc:"Seconds until the next attempt"`
-	Target        string  `json:"target,omitempty" doc:"Scene › Source being driven"`
-	TargetMissing bool    `json:"target_missing,omitempty" doc:"Target not found in OBS"`
-	Timestamp     string  `json:"timestamp"`
+	State          string  `json:"state" enum:"off,connecting,waiting,connected,active"`
+	Server         string  `json:"server,omitempty"`
+	OBSVersion     string  `json:"obs_version,omitempty"`
+	Error          string  `json:"error,omitempty" doc:"Why the last attempt failed"`
+	RetryInS       float64 `json:"retry_in_s,omitempty" doc:"Seconds until the next attempt"`
+	Target         string  `json:"target,omitempty" doc:"Scene › Source being driven"`
+	TargetMissing  bool    `json:"target_missing,omitempty" doc:"Target not found in OBS"`
+	BrowserWarning string  `json:"browser_warning,omitempty" doc:"Misconfigured PinQuake browser sources under the target; empty when no warning is needed"`
+	Timestamp      string  `json:"timestamp"`
 }
 
 func (e OBSStatusEvent) Type() uint32 { return TypeOBSStatus }

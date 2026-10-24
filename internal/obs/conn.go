@@ -10,6 +10,7 @@ import (
 	obsevents "github.com/andreykaipov/goobs/api/events"
 	"github.com/andreykaipov/goobs/api/events/subscriptions"
 	"github.com/andreykaipov/goobs/api/requests/general"
+	"github.com/andreykaipov/goobs/api/requests/inputs"
 	"github.com/andreykaipov/goobs/api/requests/sceneitems"
 	"github.com/andreykaipov/goobs/api/requests/scenes"
 	"github.com/andreykaipov/goobs/api/typedefs"
@@ -22,6 +23,9 @@ type Conn interface {
 	Version() string
 	// Scenes lists every scene and group with their items.
 	Scenes() ([]Scene, error)
+	// OpenInputSettings opens a separate read-only connection. Called by the
+	// diagnostics worker, so settings requests never delay visibility writes.
+	OpenInputSettings() (InputSettingsConn, error)
 	SetItemEnabled(sceneUUID string, itemID int, enabled bool) error
 	// Ping round-trips a request; an error means the session is dead.
 	Ping() error
@@ -33,6 +37,14 @@ type Conn interface {
 	Close() error
 }
 
+// InputSettingsConn is an independent session for browser diagnostics.
+// It is owned by one worker and closed after each scan.
+type InputSettingsConn interface {
+	// InputSettings reads settings merged over the input kind defaults.
+	InputSettings(Item) (map[string]any, error)
+	Close() error
+}
+
 // Dialer opens a session. server is host:port.
 type Dialer func(server, password string) (Conn, error)
 
@@ -40,15 +52,7 @@ const requestTimeout = 5 * time.Second
 
 // Dial connects to obs-websocket with goobs.
 func Dial(server, password string) (Conn, error) {
-	dialer := *websocket.DefaultDialer
-	dialer.HandshakeTimeout = requestTimeout
-	client, err := goobs.New(server,
-		goobs.WithPassword(password),
-		goobs.WithDialer(&dialer),
-		goobs.WithResponseTimeoutDuration(requestTimeout),
-		goobs.WithEventSubscriptions(subscriptions.Config|subscriptions.Scenes|subscriptions.Inputs|subscriptions.SceneItems),
-		goobs.WithLogger(debugLogger{}),
-	)
+	client, err := dialClient(server, password, subscriptions.Config|subscriptions.Scenes|subscriptions.Inputs|subscriptions.SceneItems)
 	if err != nil {
 		return nil, err
 	}
@@ -58,20 +62,36 @@ func Dial(server, password string) (Conn, error) {
 		return nil, err
 	}
 	c := &goobsConn{
-		client:  client,
-		version: v.ObsVersion,
-		changed: make(chan struct{}, 1),
-		done:    make(chan struct{}),
+		client:   client,
+		server:   server,
+		password: password,
+		version:  v.ObsVersion,
+		changed:  make(chan struct{}, 1),
+		done:     make(chan struct{}),
 	}
 	go c.listen()
 	return c, nil
 }
 
+func dialClient(server, password string, events int) (*goobs.Client, error) {
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = requestTimeout
+	return goobs.New(server,
+		goobs.WithPassword(password),
+		goobs.WithDialer(&dialer),
+		goobs.WithResponseTimeoutDuration(requestTimeout),
+		goobs.WithEventSubscriptions(events),
+		goobs.WithLogger(debugLogger{}),
+	)
+}
+
 type goobsConn struct {
-	client  *goobs.Client
-	version string
-	changed chan struct{}
-	done    chan struct{}
+	client   *goobs.Client
+	server   string
+	password string
+	version  string
+	changed  chan struct{}
+	done     chan struct{}
 }
 
 // listen ends when goobs closes IncomingEvents, which it does on a clean
@@ -82,7 +102,7 @@ func (c *goobsConn) listen() {
 		switch ev.(type) {
 		case *obsevents.SceneItemCreated, *obsevents.SceneItemRemoved,
 			*obsevents.SceneCreated, *obsevents.SceneRemoved, *obsevents.SceneNameChanged,
-			*obsevents.InputRemoved, *obsevents.InputNameChanged,
+			*obsevents.InputRemoved, *obsevents.InputNameChanged, *obsevents.InputSettingsChanged,
 			*obsevents.CurrentSceneCollectionChanged:
 			select {
 			case c.changed <- struct{}{}:
@@ -109,6 +129,49 @@ func (c *goobsConn) SetItemEnabled(sceneUUID string, itemID int, enabled bool) e
 		SceneItemEnabled: &enabled,
 	})
 	return err
+}
+
+func (c *goobsConn) OpenInputSettings() (InputSettingsConn, error) {
+	// goobs serializes requests per client, so a goroutine sharing c.client
+	// would still block SetItemEnabled behind slow settings reads.
+	client, err := dialClient(c.server, c.password, subscriptions.None)
+	if err != nil {
+		return nil, err
+	}
+	return &goobsInputSettings{client: client}, nil
+}
+
+type goobsInputSettings struct {
+	client        *goobs.Client
+	inputDefaults map[string]map[string]any // cached for this scan; worker only
+}
+
+func (c *goobsInputSettings) Close() error { return c.client.Disconnect() }
+
+func (c *goobsInputSettings) InputSettings(item Item) (map[string]any, error) {
+	params := &inputs.GetInputSettingsParams{}
+	if item.UUID != "" {
+		params.InputUuid = &item.UUID
+	} else {
+		params.InputName = &item.Name
+	}
+	res, err := c.client.Inputs.GetInputSettings(params)
+	if err != nil {
+		return nil, err
+	}
+	if c.inputDefaults == nil {
+		c.inputDefaults = make(map[string]map[string]any)
+	}
+	defaults, cached := c.inputDefaults[res.InputKind]
+	if !cached {
+		resDefaults, err := c.client.Inputs.GetInputDefaultSettings(&inputs.GetInputDefaultSettingsParams{InputKind: &res.InputKind})
+		if err != nil {
+			return nil, err
+		}
+		defaults = resDefaults.DefaultInputSettings
+		c.inputDefaults[res.InputKind] = defaults
+	}
+	return mergeInputSettings(defaults, res.InputSettings), nil
 }
 
 func (c *goobsConn) Scenes() ([]Scene, error) {

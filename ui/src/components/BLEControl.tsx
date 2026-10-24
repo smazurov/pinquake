@@ -431,7 +431,7 @@ export default function BLEControl({ onSSEStatus, onSensorChange, onOBSStatus }:
       {note && !view.chosen && <p className="text-xs text-slate-400">{note}</p>}
 
       {reversedLog.length > 0 && (
-        <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs border-t border-slate-700 pt-3">
+        <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs">
           {reversedLog.map((entry, i) => (
             <div key={i} className={levelColor[entry.level] ?? "text-slate-400"}>
               <span className="text-slate-500 mr-2">{formatTime(entry.timestamp)}</span>

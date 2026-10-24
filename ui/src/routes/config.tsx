@@ -25,14 +25,20 @@ import Collapsible from "../components/Collapsible";
 import { ErrorAlert } from "../components/ErrorAlert";
 import SchemaForm from "../components/SchemaForm";
 import { InputField } from "../components/InputField";
+import PreviewContent from "../components/PreviewContent";
 import experimentRegistry from "../lib/experimentRegistry";
 
 type PreviewTab = "off" | "canvas" | "crosshair" | "experiment" | "plumbbob";
 
+interface VisualizationOption {
+  tab: Exclude<PreviewTab, "off">;
+  enabled: boolean;
+  onChange: (key: string, value: unknown) => void;
+}
 
 const TAB_LABELS: Record<PreviewTab, string> = {
   off: "Off",
-  canvas: "Canvas",
+  canvas: "Waveform",
   crosshair: "Crosshair",
   experiment: "Experiment",
   plumbbob: "Plumb Bob",
@@ -142,28 +148,6 @@ const saveSensorConfig = async (val: WT901Config) => {
   const { error } = await api.PUT("/api/config/sensor/WT901", { body: val });
   return { error };
 };
-
-function PreviewContent({ url, label }: Readonly<{ url: string | null; label: string }>) {
-  if (!url) {
-    return (
-      <div className="bg-black/50 flex items-center justify-center p-4 text-slate-500 text-sm">
-        Preview off
-      </div>
-    );
-  }
-  return (
-    <div className="bg-black/50 flex items-center justify-center p-4">
-      <div style={{ width: "100%", aspectRatio: "9 / 16" }}>
-        <iframe
-          src={url}
-          className="w-full h-full border-0 rounded"
-          style={{ background: "transparent" }}
-          title={`${label} Preview`}
-        />
-      </div>
-    </div>
-  );
-}
 
 export default function ConfigRoute() {
   const [config, setConfig] = useState<PinQuakeConfig | null>(null);
@@ -310,13 +294,13 @@ export default function ConfigRoute() {
     );
   }
 
-  const vizTabs: [PreviewTab, boolean][] = [
-    ["canvas", config.waveform.enabled],
-    ["crosshair", config.crosshair.enabled],
-    ["experiment", config.experiment.enabled],
-    ["plumbbob", config.plumb_bob.enabled],
+  const visualizations: VisualizationOption[] = [
+    { tab: "plumbbob", enabled: config.plumb_bob.enabled, onChange: updatePlumbBob },
+    { tab: "crosshair", enabled: config.crosshair.enabled, onChange: updateCrosshair },
+    { tab: "canvas", enabled: config.waveform.enabled, onChange: updateWaveform },
+    { tab: "experiment", enabled: config.experiment.enabled, onChange: updateExperiment },
   ];
-  const enabledVizzes: PreviewTab[] = ["off", ...vizTabs.filter(([, on]) => on).map(([t]) => t)];
+  const enabledVizzes: PreviewTab[] = ["off", ...visualizations.filter(({ enabled }) => enabled).map(({ tab }) => tab)];
 
   const activeTab = enabledVizzes.includes(previewTab) ? previewTab : enabledVizzes[0];
 
@@ -329,9 +313,11 @@ export default function ConfigRoute() {
   const plumbBobUrl = `${window.location.origin}/plumbbob?width=${config.plumb_bob.width}&height=${config.plumb_bob.height}`;
   const previewUrls: Record<string, string> = { canvas: canvasUrl, crosshair: crosshairUrl, experiment: experimentUrl, plumbbob: plumbBobUrl };
   const previewUrl = activeTab !== "off" ? previewUrls[activeTab] : null;
+  const previewConfigs = { canvas: config.waveform, crosshair: config.crosshair, experiment: config.experiment, plumbbob: config.plumb_bob };
+  const previewDimensions = activeTab !== "off" ? previewConfigs[activeTab] : null;
 
   return (
-    <div className="min-h-screen bg-slate-900 overflow-auto">
+    <div className="min-h-screen bg-slate-900 flow-root">
       <ConnectionBanner status={sseStatus} />
       <SimpleNavbar logoText="PinQuake" />
 
@@ -379,27 +365,56 @@ export default function ConfigRoute() {
               <SaveStatus status={saveStatus} error={saveError} />
             </div>
 
-            {config.waveform.enabled && (
-              <Collapsible id="waveform" title="Waveform">
+            <Collapsible id="display" title="Display">
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-gray-300 mb-2">Enabled visualizations</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  {visualizations.map(({ tab, enabled, onChange }) => (
+                    <label key={tab} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(e) => onChange("enabled", e.target.checked)}
+                        className="rounded border-slate-300/20 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-medium text-gray-300">{TAB_LABELS[tab]}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500">Disabled visualizations are hidden from settings, previews, and overlays.</p>
+              </fieldset>
+              {sectionSchema?.display ? (
+                <SchemaForm
+                  fields={sectionSchema.display}
+                  values={config.display as unknown as Record<string, unknown>}
+                  onChange={updateDisplay}
+                />
+              ) : (
+                <p className="text-xs text-slate-500">Loading schema...</p>
+              )}
+            </Collapsible>
+
+            {config.plumb_bob.enabled && (
+              <Collapsible id="plumbbob" title="Plumb Bob">
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <InputField
                     label="Width"
                     type="number"
-                    value={config.waveform.width}
-                    onChange={(e) => updateWaveform("width", Number(e.target.value))}
+                    value={config.plumb_bob.width}
+                    onChange={(e) => updatePlumbBob("width", Number(e.target.value))}
                   />
                   <InputField
                     label="Height"
                     type="number"
-                    value={config.waveform.height}
-                    onChange={(e) => updateWaveform("height", Number(e.target.value))}
+                    value={config.plumb_bob.height}
+                    onChange={(e) => updatePlumbBob("height", Number(e.target.value))}
                   />
                 </div>
-                {sectionSchema?.waveform ? (
+                {sectionSchema?.plumbBob ? (
                   <SchemaForm
-                    fields={sectionSchema.waveform}
-                    values={config.waveform as unknown as Record<string, unknown>}
-                    onChange={updateWaveform}
+                    fields={sectionSchema.plumbBob}
+                    values={config.plumb_bob as unknown as Record<string, unknown>}
+                    onChange={updatePlumbBob}
                   />
                 ) : (
                   <p className="text-xs text-slate-500">Loading schema...</p>
@@ -428,6 +443,34 @@ export default function ConfigRoute() {
                     fields={sectionSchema.crosshair}
                     values={config.crosshair as unknown as Record<string, unknown>}
                     onChange={updateCrosshair}
+                  />
+                ) : (
+                  <p className="text-xs text-slate-500">Loading schema...</p>
+                )}
+              </Collapsible>
+            )}
+
+            {config.waveform.enabled && (
+              <Collapsible id="waveform" title="Waveform">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <InputField
+                    label="Width"
+                    type="number"
+                    value={config.waveform.width}
+                    onChange={(e) => updateWaveform("width", Number(e.target.value))}
+                  />
+                  <InputField
+                    label="Height"
+                    type="number"
+                    value={config.waveform.height}
+                    onChange={(e) => updateWaveform("height", Number(e.target.value))}
+                  />
+                </div>
+                {sectionSchema?.waveform ? (
+                  <SchemaForm
+                    fields={sectionSchema.waveform}
+                    values={config.waveform as unknown as Record<string, unknown>}
+                    onChange={updateWaveform}
                   />
                 ) : (
                   <p className="text-xs text-slate-500">Loading schema...</p>
@@ -485,46 +528,6 @@ export default function ConfigRoute() {
               </Collapsible>
             )}
 
-            {config.plumb_bob.enabled && (
-              <Collapsible id="plumbbob" title="Plumb Bob">
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <InputField
-                    label="Width"
-                    type="number"
-                    value={config.plumb_bob.width}
-                    onChange={(e) => updatePlumbBob("width", Number(e.target.value))}
-                  />
-                  <InputField
-                    label="Height"
-                    type="number"
-                    value={config.plumb_bob.height}
-                    onChange={(e) => updatePlumbBob("height", Number(e.target.value))}
-                  />
-                </div>
-                {sectionSchema?.plumbBob ? (
-                  <SchemaForm
-                    fields={sectionSchema.plumbBob}
-                    values={config.plumb_bob as unknown as Record<string, unknown>}
-                    onChange={updatePlumbBob}
-                  />
-                ) : (
-                  <p className="text-xs text-slate-500">Loading schema...</p>
-                )}
-              </Collapsible>
-            )}
-
-            <Collapsible id="display" title="Display">
-              {sectionSchema?.display ? (
-                <SchemaForm
-                  fields={sectionSchema.display}
-                  values={config.display as unknown as Record<string, unknown>}
-                  onChange={updateDisplay}
-                />
-              ) : (
-                <p className="text-xs text-slate-500">Loading schema...</p>
-              )}
-            </Collapsible>
-
           </div>
 
           <div className="flex-1 min-w-0">
@@ -556,7 +559,7 @@ export default function ConfigRoute() {
                     />
                   )}
                 </div>
-                <PreviewContent url={previewUrl} label={TAB_LABELS[activeTab]} />
+                <PreviewContent url={previewUrl} label={TAB_LABELS[activeTab]} dimensions={previewDimensions} />
               </Card>
             </div>
           </div>
